@@ -6,7 +6,6 @@
 #include "esphome/core/hal.h"
 #include "esphome/components/one_wire/one_wire.h"
 
-#include <driver/gpio.h>
 #include <driver/rmt_tx.h>
 #include <driver/rmt_rx.h>
 #include <freertos/FreeRTOS.h>
@@ -30,8 +29,6 @@ class ESP32RMTOneWireBus : public one_wire::OneWireBus, public Component {
 
  protected:
   InternalGPIOPin *pin_{nullptr};
-
-  gpio_num_t gpio_num_{GPIO_NUM_NC};
 
   rmt_channel_handle_t tx_channel_{nullptr};
   rmt_channel_handle_t rx_channel_{nullptr};

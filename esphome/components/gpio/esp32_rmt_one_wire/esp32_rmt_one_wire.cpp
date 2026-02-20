@@ -5,7 +5,7 @@
 #ifdef USE_ESP32
 
 #include <cstring>
-#include <esp_idf_version.h>
+#include <driver/gpio.h>
 
 namespace esphome {
 namespace esp32_rmt_one_wire {
@@ -116,12 +116,6 @@ void ESP32RMTOneWireBus::destroy_() {
     free(this->rx_symbols_buf_);
     this->rx_symbols_buf_ = nullptr;
   }
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
-  if (this->gpio_num_ != GPIO_NUM_NC) {
-    gpio_od_disable(this->gpio_num_);
-    this->gpio_num_ = GPIO_NUM_NC;
-  }
-#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +163,6 @@ void ESP32RMTOneWireBus::setup() {
   }
 
   auto gpio_num = static_cast<gpio_num_t>(this->pin_->get_pin());
-  this->gpio_num_ = gpio_num;
 
   // RX channel must be created BEFORE TX channel (ESP-IDF requirement for
   // loop-back: RX claims the GPIO first, TX piggy-backs on it)
@@ -200,21 +193,14 @@ void ESP32RMTOneWireBus::setup() {
   tx_cfg.gpio_num = gpio_num;
   tx_cfg.mem_block_symbols = 64;
   tx_cfg.trans_queue_depth = 4;
-#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(6, 0, 0)
   tx_cfg.flags.io_loop_back = true;  // TX output feeds back into RX input
   tx_cfg.flags.io_od_mode = true;    // Open-drain required for 1-wire
-#endif
   if (rmt_new_tx_channel(&tx_cfg, &this->tx_channel_) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to create TX channel on GPIO %d", gpio_num);
     this->destroy_();
     this->mark_failed();
     return;
   }
-
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
-  // IDF 6+: open-drain is configured separately
-  gpio_od_enable(gpio_num);
-#endif
 
   // Enable the internal pull-up (useful for short wire runs; for longer buses
   // an external 4.7 kΩ resistor to VCC is recommended by the datasheet)
