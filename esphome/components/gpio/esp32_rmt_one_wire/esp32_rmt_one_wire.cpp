@@ -8,7 +8,7 @@
 #include <driver/gpio.h>
 
 namespace esphome {
-namespace esp32_rmt_one_wire {
+namespace gpio {
 
 static const char *const TAG = "esp32_rmt_one_wire";
 
@@ -153,8 +153,7 @@ void ESP32RMTOneWireBus::setup() {
   }
 
   // RX symbol buffer — must hold up to MAX_RX_SYMBOLS symbols
-  this->rx_symbols_buf_ =
-      static_cast<rmt_symbol_word_t *>(malloc(MAX_RX_SYMBOLS * sizeof(rmt_symbol_word_t)));
+  this->rx_symbols_buf_ = static_cast<rmt_symbol_word_t *>(malloc(MAX_RX_SYMBOLS * sizeof(rmt_symbol_word_t)));
   if (this->rx_symbols_buf_ == nullptr) {
     ESP_LOGE(TAG, "Failed to allocate RX symbol buffer");
     this->destroy_();
@@ -359,8 +358,8 @@ bool ESP32RMTOneWireBus::read_bit_() {
 }
 
 void ESP32RMTOneWireBus::write_bit_(bool bit) {
-  rmt_symbol_word_t sym =
-      bit ? make_symbol(SLOT_START, 0, SLOT_BIT + SLOT_RECOVERY, 1) : make_symbol(SLOT_START + SLOT_BIT, 0, SLOT_RECOVERY, 1);
+  rmt_symbol_word_t sym = bit ? make_symbol(SLOT_START, 0, SLOT_BIT + SLOT_RECOVERY, 1)
+                              : make_symbol(SLOT_START + SLOT_BIT, 0, SLOT_RECOVERY, 1);
   rmt_transmit(this->tx_channel_, this->tx_copy_encoder_, &sym, sizeof(sym), &TX_CONFIG);
   rmt_tx_wait_all_done(this->tx_channel_, 50);
 }
@@ -402,10 +401,11 @@ uint64_t ESP32RMTOneWireBus::search_int() {
         last_zero = bit_number;
     }
 
-    if (branch)
+    if (branch) {
       address |= bit_mask;
-    else
+    } else {
       address &= ~bit_mask;
+    }
 
     this->write_bit_(branch);
   }
@@ -418,7 +418,7 @@ uint64_t ESP32RMTOneWireBus::search_int() {
   return address;
 }
 
-}  // namespace esp32_rmt_one_wire
+}  // namespace gpio
 }  // namespace esphome
 
 #endif  // USE_ESP32

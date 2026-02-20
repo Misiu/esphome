@@ -1,15 +1,16 @@
 from esphome import pins
 import esphome.codegen as cg
 from esphome.components import esp32, esp32_rmt
-from esphome.components.one_wire import OneWireBus
 from esphome.components.esp32 import include_builtin_idf_component
+from esphome.components.one_wire import OneWireBus
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_PIN
 
+from .. import gpio_ns
+
 DEPENDENCIES = ["esp32"]
 
-esp32_rmt_one_wire_ns = cg.esphome_ns.namespace("esp32_rmt_one_wire")
-ESP32RMTOneWireBus = esp32_rmt_one_wire_ns.class_("ESP32RMTOneWireBus", OneWireBus, cg.Component)
+ESP32RMTOneWireBus = gpio_ns.class_("ESP32RMTOneWireBus", OneWireBus, cg.Component)
 
 CONFIG_SCHEMA = cv.All(
     esp32.only_on_variant(

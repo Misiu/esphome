@@ -12,7 +12,7 @@
 #include <freertos/queue.h>
 
 namespace esphome {
-namespace esp32_rmt_one_wire {
+namespace gpio {
 
 class ESP32RMTOneWireBus : public one_wire::OneWireBus, public Component {
  public:
@@ -50,7 +50,7 @@ class ESP32RMTOneWireBus : public one_wire::OneWireBus, public Component {
   void destroy_();
 };
 
-}  // namespace esp32_rmt_one_wire
+}  // namespace gpio
 }  // namespace esphome
 
 #endif  // USE_ESP32
