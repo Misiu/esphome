@@ -1,0 +1,4 @@
+substitutions:
+  one_wire_pin: "4"
+
+<<: !include common.yaml
