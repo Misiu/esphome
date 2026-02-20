@@ -1,8 +1,8 @@
 substitutions:
   one_wire_pin: "4"
 
-one_wire:
-  - platform: esp32_rmt_one_wire
+esp32_rmt_one_wire:
+  - platform: gpio
     pin: ${one_wire_pin}
 
 sensor:

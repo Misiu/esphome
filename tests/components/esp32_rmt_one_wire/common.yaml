@@ -1,5 +1,5 @@
-one_wire:
-  - platform: esp32_rmt_one_wire
+esp32_rmt_one_wire:
+  - platform: gpio
     id: rmt_one_wire_bus
     pin: ${one_wire_pin}
 
