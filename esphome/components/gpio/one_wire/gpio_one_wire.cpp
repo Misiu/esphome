@@ -264,6 +264,12 @@ void GPIOOneWireBus::setup() {
 int GPIOOneWireBus::reset_int() {
   rmt_symbol_word_t reset_sym = make_symbol(RESET_PULSE_DURATION, 0, RESET_WAIT_DURATION, 1);
 
+  // Drain any stale event left by a previous failed/timed-out operation.
+  // If rmt_transmit() ever fails after rmt_receive() is armed, the idle-HIGH
+  // bus (>700 µs silence) auto-triggers the done callback within one
+  // signal_range_max window, leaving a stale item in the queue.
+  xQueueReset(this->receive_queue_);
+
   if (rmt_receive(this->rx_channel_, this->rx_symbols_buf_, 2 * sizeof(rmt_symbol_word_t), &RX_CONFIG) != ESP_OK)
     return -1;
   if (rmt_transmit(this->tx_channel_, this->tx_copy_encoder_, &reset_sym, sizeof(reset_sym), &TX_CONFIG) != ESP_OK)
@@ -292,13 +298,17 @@ int GPIOOneWireBus::reset_int() {
 // write8() / write64() — RMT path
 // ---------------------------------------------------------------------------
 void GPIOOneWireBus::write8(uint8_t val) {
-  rmt_transmit(this->tx_channel_, this->tx_bytes_encoder_, &val, 1, &TX_CONFIG);
-  rmt_tx_wait_all_done(this->tx_channel_, 50);
+  if (rmt_transmit(this->tx_channel_, this->tx_bytes_encoder_, &val, 1, &TX_CONFIG) != ESP_OK ||
+      rmt_tx_wait_all_done(this->tx_channel_, 50) != ESP_OK) {
+    ESP_LOGE(TAG, "write8 failed");
+  }
 }
 
 void GPIOOneWireBus::write64(uint64_t val) {
-  rmt_transmit(this->tx_channel_, this->tx_bytes_encoder_, &val, sizeof(val), &TX_CONFIG);
-  rmt_tx_wait_all_done(this->tx_channel_, 100);
+  if (rmt_transmit(this->tx_channel_, this->tx_bytes_encoder_, &val, sizeof(val), &TX_CONFIG) != ESP_OK ||
+      rmt_tx_wait_all_done(this->tx_channel_, 100) != ESP_OK) {
+    ESP_LOGE(TAG, "write64 failed");
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +321,7 @@ uint8_t GPIOOneWireBus::read8() {
   uint8_t tx_buf = 0xFF;
   uint8_t result = 0;
 
+  xQueueReset(this->receive_queue_);
   if (rmt_receive(this->rx_channel_, this->rx_symbols_buf_, 8 * sizeof(rmt_symbol_word_t), &RX_CONFIG) != ESP_OK)
     return 0;
   if (rmt_transmit(this->tx_channel_, this->tx_bytes_encoder_, &tx_buf, 1, &TX_CONFIG) != ESP_OK)
@@ -335,6 +346,7 @@ uint64_t GPIOOneWireBus::read64() {
   memset(tx_buf, 0xFF, sizeof(tx_buf));
   uint64_t result = 0;
 
+  xQueueReset(this->receive_queue_);
   if (rmt_receive(this->rx_channel_, this->rx_symbols_buf_, MAX_RX_SYMBOLS * sizeof(rmt_symbol_word_t), &RX_CONFIG) !=
       ESP_OK)
     return 0;
@@ -360,6 +372,7 @@ uint64_t GPIOOneWireBus::read64() {
 bool GPIOOneWireBus::read_bit_() {
   rmt_symbol_word_t bit1_sym = make_symbol(SLOT_START, 0, SLOT_BIT + SLOT_RECOVERY, 1);
 
+  xQueueReset(this->receive_queue_);
   if (rmt_receive(this->rx_channel_, this->rx_symbols_buf_, sizeof(rmt_symbol_word_t), &RX_CONFIG) != ESP_OK)
     return false;
   if (rmt_transmit(this->tx_channel_, this->tx_copy_encoder_, &bit1_sym, sizeof(bit1_sym), &TX_CONFIG) != ESP_OK)
@@ -377,8 +390,10 @@ bool GPIOOneWireBus::read_bit_() {
 void GPIOOneWireBus::write_bit_(bool bit) {
   rmt_symbol_word_t sym = bit ? make_symbol(SLOT_START, 0, SLOT_BIT + SLOT_RECOVERY, 1)
                               : make_symbol(SLOT_START + SLOT_BIT, 0, SLOT_RECOVERY, 1);
-  rmt_transmit(this->tx_channel_, this->tx_copy_encoder_, &sym, sizeof(sym), &TX_CONFIG);
-  rmt_tx_wait_all_done(this->tx_channel_, 50);
+  if (rmt_transmit(this->tx_channel_, this->tx_copy_encoder_, &sym, sizeof(sym), &TX_CONFIG) != ESP_OK ||
+      rmt_tx_wait_all_done(this->tx_channel_, 50) != ESP_OK) {
+    ESP_LOGE(TAG, "write bit failed");
+  }
 }
 
 // ---------------------------------------------------------------------------

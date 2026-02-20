@@ -60,7 +60,6 @@ class GPIOOneWireBus : public one_wire::OneWireBus, public Component {
   void destroy_();
 #else
   ISRInternalGPIOPin pin_;
-  bool read_bit_(uint32_t *t);
 #endif
 };
 
