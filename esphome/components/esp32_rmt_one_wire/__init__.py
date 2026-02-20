@@ -1,3 +1,1 @@
-CODEOWNERS = ["@ssieb"]
-
 IS_PLATFORM_COMPONENT = True

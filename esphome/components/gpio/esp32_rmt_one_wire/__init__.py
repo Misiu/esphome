@@ -5,7 +5,6 @@ from esphome.components.esp32_rmt import VARIANTS_NO_RMT
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_PIN
 
-CODEOWNERS = ["@ssieb"]
 DEPENDENCIES = ["esp32"]
 
 esp32_rmt_one_wire_ns = cg.esphome_ns.namespace("esp32_rmt_one_wire")

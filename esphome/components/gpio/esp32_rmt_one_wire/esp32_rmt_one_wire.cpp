@@ -1,20 +1,3 @@
-/*
- * Hardware-timed 1-wire bus using the ESP32 RMT peripheral.
- *
- * Based on the official Espressif idf-extra-components onewire_bus_impl_rmt.c
- * (Apache-2.0 license, Copyright 2022-2025 Espressif Systems (Shanghai) CO LTD).
- *
- * Unlike the GPIO bit-bang implementation this driver does not disable
- * interrupts at all: all bus timing is handled entirely in hardware by the RMT
- * TX and RX channels.  This eliminates the multi-millisecond interrupt-disabled
- * windows that caused glitches on concurrent peripherals such as displays.
- *
- * The single GPIO pin is configured in open-drain mode and shared between:
- *   - TX channel: drives the bus LOW for the precise reset / write / read-clock
- *     durations defined in the RMT symbol table.
- *   - RX channel (loop-back): captures bus transitions so the device's presence
- *     pulse and data bits can be decoded from the received RMT symbols.
- */
 #include "esp32_rmt_one_wire.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
@@ -103,6 +86,40 @@ static bool IRAM_ATTR rx_done_cb(rmt_channel_handle_t /*channel*/, const rmt_rx_
 }
 
 // ---------------------------------------------------------------------------
+// destroy_(): release all RMT resources.  Safe to call at any point during
+// or after setup() — each resource is only freed if it was created.
+// Mirrors onewire_bus_rmt_destroy() from espressif/idf-extra-components.
+// ---------------------------------------------------------------------------
+void ESP32RMTOneWireBus::destroy_() {
+  if (this->tx_bytes_encoder_) {
+    rmt_del_encoder(this->tx_bytes_encoder_);
+    this->tx_bytes_encoder_ = nullptr;
+  }
+  if (this->tx_copy_encoder_) {
+    rmt_del_encoder(this->tx_copy_encoder_);
+    this->tx_copy_encoder_ = nullptr;
+  }
+  if (this->rx_channel_) {
+    rmt_disable(this->rx_channel_);
+    rmt_del_channel(this->rx_channel_);
+    this->rx_channel_ = nullptr;
+  }
+  if (this->tx_channel_) {
+    rmt_disable(this->tx_channel_);
+    rmt_del_channel(this->tx_channel_);
+    this->tx_channel_ = nullptr;
+  }
+  if (this->receive_queue_) {
+    vQueueDelete(this->receive_queue_);
+    this->receive_queue_ = nullptr;
+  }
+  if (this->rx_symbols_buf_) {
+    free(this->rx_symbols_buf_);
+    this->rx_symbols_buf_ = nullptr;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // setup()
 // ---------------------------------------------------------------------------
 void ESP32RMTOneWireBus::setup() {
@@ -113,6 +130,7 @@ void ESP32RMTOneWireBus::setup() {
   bytes_enc_cfg.flags.msb_first = 0;
   if (rmt_new_bytes_encoder(&bytes_enc_cfg, &this->tx_bytes_encoder_) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to create bytes encoder");
+    this->destroy_();
     this->mark_failed();
     return;
   }
@@ -121,6 +139,7 @@ void ESP32RMTOneWireBus::setup() {
   rmt_copy_encoder_config_t copy_enc_cfg = {};
   if (rmt_new_copy_encoder(&copy_enc_cfg, &this->tx_copy_encoder_) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to create copy encoder");
+    this->destroy_();
     this->mark_failed();
     return;
   }
@@ -129,6 +148,7 @@ void ESP32RMTOneWireBus::setup() {
   this->receive_queue_ = xQueueCreate(1, sizeof(rmt_rx_done_event_data_t));
   if (this->receive_queue_ == nullptr) {
     ESP_LOGE(TAG, "Failed to create receive queue");
+    this->destroy_();
     this->mark_failed();
     return;
   }
@@ -138,6 +158,7 @@ void ESP32RMTOneWireBus::setup() {
       static_cast<rmt_symbol_word_t *>(malloc(MAX_RX_SYMBOLS * sizeof(rmt_symbol_word_t)));
   if (this->rx_symbols_buf_ == nullptr) {
     ESP_LOGE(TAG, "Failed to allocate RX symbol buffer");
+    this->destroy_();
     this->mark_failed();
     return;
   }
@@ -153,6 +174,7 @@ void ESP32RMTOneWireBus::setup() {
   rx_cfg.mem_block_symbols = RX_MEM_BLOCK_SYMBOLS;
   if (rmt_new_rx_channel(&rx_cfg, &this->rx_channel_) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to create RX channel on GPIO %d", gpio_num);
+    this->destroy_();
     this->mark_failed();
     return;
   }
@@ -160,6 +182,7 @@ void ESP32RMTOneWireBus::setup() {
   rmt_rx_event_callbacks_t cbs = {.on_recv_done = rx_done_cb};
   if (rmt_rx_register_event_callbacks(this->rx_channel_, &cbs, this->receive_queue_) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to register RX callback");
+    this->destroy_();
     this->mark_failed();
     return;
   }
@@ -177,6 +200,7 @@ void ESP32RMTOneWireBus::setup() {
 #endif
   if (rmt_new_tx_channel(&tx_cfg, &this->tx_channel_) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to create TX channel on GPIO %d", gpio_num);
+    this->destroy_();
     this->mark_failed();
     return;
   }
@@ -192,18 +216,27 @@ void ESP32RMTOneWireBus::setup() {
 
   if (rmt_enable(this->rx_channel_) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to enable RX channel");
+    this->destroy_();
     this->mark_failed();
     return;
   }
   if (rmt_enable(this->tx_channel_) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to enable TX channel");
+    this->destroy_();
     this->mark_failed();
     return;
   }
 
-  // Release the bus so it is in a known HIGH (idle) state before the first reset
+  // Release the bus so it is in a known HIGH (idle) state before the first reset.
+  // Wait for the transmission to complete before starting the device search.
   rmt_symbol_word_t release = make_symbol(1, 1, 0, 1);
-  rmt_transmit(this->tx_channel_, this->tx_copy_encoder_, &release, sizeof(release), &TX_CONFIG);
+  if (rmt_transmit(this->tx_channel_, this->tx_copy_encoder_, &release, sizeof(release), &TX_CONFIG) != ESP_OK ||
+      rmt_tx_wait_all_done(this->tx_channel_, 1000) != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to release bus");
+    this->destroy_();
+    this->mark_failed();
+    return;
+  }
 
   this->search();
 }
@@ -227,7 +260,7 @@ int ESP32RMTOneWireBus::reset_int() {
     return -1;
 
   rmt_rx_done_event_data_t rx_data;
-  if (xQueueReceive(this->receive_queue_, &rx_data, pdMS_TO_TICKS(100)) != pdPASS)
+  if (xQueueReceive(this->receive_queue_, &rx_data, pdMS_TO_TICKS(1000)) != pdPASS)
     return -1;
 
   if (rx_data.num_symbols < 2)
@@ -274,7 +307,7 @@ uint8_t ESP32RMTOneWireBus::read8() {
     return 0;
 
   rmt_rx_done_event_data_t rx_data;
-  if (xQueueReceive(this->receive_queue_, &rx_data, pdMS_TO_TICKS(100)) != pdPASS) {
+  if (xQueueReceive(this->receive_queue_, &rx_data, pdMS_TO_TICKS(1000)) != pdPASS) {
     ESP_LOGE(TAG, "read8 timeout");
     return 0;
   }
@@ -299,7 +332,7 @@ uint64_t ESP32RMTOneWireBus::read64() {
     return 0;
 
   rmt_rx_done_event_data_t rx_data;
-  if (xQueueReceive(this->receive_queue_, &rx_data, pdMS_TO_TICKS(200)) != pdPASS) {
+  if (xQueueReceive(this->receive_queue_, &rx_data, pdMS_TO_TICKS(1000)) != pdPASS) {
     ESP_LOGE(TAG, "read64 timeout");
     return 0;
   }
@@ -323,11 +356,13 @@ bool ESP32RMTOneWireBus::read_bit_() {
     return false;
 
   rmt_rx_done_event_data_t rx_data;
-  if (xQueueReceive(this->receive_queue_, &rx_data, pdMS_TO_TICKS(100)) != pdPASS)
+  if (xQueueReceive(this->receive_queue_, &rx_data, pdMS_TO_TICKS(1000)) != pdPASS)
     return false;
 
+  // If no symbol captured (unexpected), treat as 0-bit per the reference implementation
   if (rx_data.num_symbols == 0)
-    return true;  // Bus stayed HIGH the whole slot → device sent 1
+    return false;
+  // duration0 ≤ SLOT_SAMPLE_TIME → bus released quickly → device sent 1
   return rx_data.received_symbols[0].duration0 <= SLOT_SAMPLE_TIME;
 }
 
@@ -340,8 +375,6 @@ void ESP32RMTOneWireBus::write_bit_(bool bit) {
 
 // ---------------------------------------------------------------------------
 // ROM search (Dallas/Maxim 1-wire enumeration algorithm)
-// This is identical to the GPIO implementation but calls the RMT read_bit_ /
-// write_bit_ helpers — no interrupts are disabled at any point.
 // ---------------------------------------------------------------------------
 void ESP32RMTOneWireBus::reset_search() {
   this->last_discrepancy_ = 0;

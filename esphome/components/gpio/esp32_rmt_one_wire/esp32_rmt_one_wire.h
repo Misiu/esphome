@@ -47,6 +47,7 @@ class ESP32RMTOneWireBus : public one_wire::OneWireBus, public Component {
   uint64_t search_int() override;
   bool read_bit_();
   void write_bit_(bool bit);
+  void destroy_();
 };
 
 }  // namespace esp32_rmt_one_wire
