@@ -4,6 +4,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 #include "esphome/components/one_wire/one_wire.h"
 
 #include <driver/rmt_tx.h>

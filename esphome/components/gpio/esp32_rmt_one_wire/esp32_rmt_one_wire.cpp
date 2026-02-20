@@ -113,7 +113,7 @@ void ESP32RMTOneWireBus::destroy_() {
     this->receive_queue_ = nullptr;
   }
   if (this->rx_symbols_buf_) {
-    free(this->rx_symbols_buf_);
+    RAMAllocator<rmt_symbol_word_t>().deallocate(this->rx_symbols_buf_, MAX_RX_SYMBOLS);
     this->rx_symbols_buf_ = nullptr;
   }
 }
@@ -153,7 +153,8 @@ void ESP32RMTOneWireBus::setup() {
   }
 
   // RX symbol buffer — must hold up to MAX_RX_SYMBOLS symbols
-  this->rx_symbols_buf_ = static_cast<rmt_symbol_word_t *>(malloc(MAX_RX_SYMBOLS * sizeof(rmt_symbol_word_t)));
+  this->rx_symbols_buf_ =
+      RAMAllocator<rmt_symbol_word_t>(RAMAllocator<rmt_symbol_word_t>::ALLOC_INTERNAL).allocate(MAX_RX_SYMBOLS);
   if (this->rx_symbols_buf_ == nullptr) {
     ESP_LOGE(TAG, "Failed to allocate RX symbol buffer");
     this->destroy_();
