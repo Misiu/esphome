@@ -3,6 +3,7 @@ import esphome.codegen as cg
 from esphome.components.one_wire import OneWireBus
 import esphome.config_validation as cv
 from esphome.const import CONF_ID, CONF_PIN
+from esphome.core import CORE
 
 from .. import gpio_ns
 
@@ -24,3 +25,16 @@ async def to_code(config):
 
     pin = await cg.gpio_pin_expression(config[CONF_PIN])
     cg.add(var.set_pin(pin))
+
+    if CORE.is_esp32:
+        from esphome.components import esp32_rmt
+        from esphome.components.esp32 import (
+            get_esp32_variant,
+            include_builtin_idf_component,
+        )
+
+        # Include the RMT driver for all ESP32 variants that have RMT hardware.
+        # Variants without RMT (C2, C61) fall back to GPIO bit-banging at runtime.
+        if get_esp32_variant() not in esp32_rmt.VARIANTS_NO_RMT:
+            # Re-enable ESP-IDF's RMT driver (excluded by default to save compile time)
+            include_builtin_idf_component("esp_driver_rmt")
