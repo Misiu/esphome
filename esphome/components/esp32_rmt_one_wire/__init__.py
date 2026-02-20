@@ -1,0 +1,3 @@
+IS_PLATFORM_COMPONENT = True
+
+AUTO_LOAD = ["one_wire"]

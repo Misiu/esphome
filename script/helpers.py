@@ -51,6 +51,7 @@ BASE_BUS_COMPONENTS = {
     "canbus",
     "remote_transmitter",
     "remote_receiver",
+    "esp32_rmt_one_wire",
 }
 
 # Cache version for components graph
