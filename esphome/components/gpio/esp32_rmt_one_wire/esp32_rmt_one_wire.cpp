@@ -6,7 +6,6 @@
 
 #include <cstring>
 #include <esp_idf_version.h>
-#include <driver/gpio.h>
 
 namespace esphome {
 namespace esp32_rmt_one_wire {
@@ -117,6 +116,12 @@ void ESP32RMTOneWireBus::destroy_() {
     free(this->rx_symbols_buf_);
     this->rx_symbols_buf_ = nullptr;
   }
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+  if (this->gpio_num_ != GPIO_NUM_NC) {
+    gpio_od_disable(this->gpio_num_);
+    this->gpio_num_ = GPIO_NUM_NC;
+  }
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +169,7 @@ void ESP32RMTOneWireBus::setup() {
   }
 
   auto gpio_num = static_cast<gpio_num_t>(this->pin_->get_pin());
+  this->gpio_num_ = gpio_num;
 
   // RX channel must be created BEFORE TX channel (ESP-IDF requirement for
   // loop-back: RX claims the GPIO first, TX piggy-backs on it)
