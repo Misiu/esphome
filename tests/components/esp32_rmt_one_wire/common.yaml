@@ -1,7 +1,6 @@
 esp32_rmt_one_wire:
-  - platform: gpio
-    id: rmt_one_wire_bus
-    pin: ${one_wire_pin}
+  id: rmt_one_wire_bus
+  pin: ${one_wire_pin}
 
 sensor:
   - platform: dallas_temp

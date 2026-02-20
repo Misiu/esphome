@@ -8,7 +8,7 @@
 #include <driver/gpio.h>
 
 namespace esphome {
-namespace gpio {
+namespace esp32_rmt_one_wire {
 
 static const char *const TAG = "esp32_rmt_one_wire";
 
@@ -419,7 +419,7 @@ uint64_t ESP32RMTOneWireBus::search_int() {
   return address;
 }
 
-}  // namespace gpio
+}  // namespace esp32_rmt_one_wire
 }  // namespace esphome
 
 #endif  // USE_ESP32

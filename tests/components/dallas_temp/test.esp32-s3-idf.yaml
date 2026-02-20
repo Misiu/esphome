@@ -2,8 +2,7 @@ substitutions:
   one_wire_pin: "4"
 
 esp32_rmt_one_wire:
-  - platform: gpio
-    pin: ${one_wire_pin}
+  pin: ${one_wire_pin}
 
 sensor:
   - platform: dallas_temp
