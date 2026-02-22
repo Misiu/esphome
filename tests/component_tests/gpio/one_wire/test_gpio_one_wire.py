@@ -258,13 +258,16 @@ def test_two_buses_esp32_generated_code_order(
     assert "esp32internalgpiopin_id_2" in bus2_pin_line, (
         "bus2 must use its own pin object, not bus1's"
     )
-    assert "esp32internalgpiopin_id)" in main_cpp.splitlines()[
-        next(
-            i
-            for i, line in enumerate(main_cpp.splitlines())
-            if "ow_bus1->set_pin(" in line
-        )
-    ], "bus1 must use its own pin object, not bus2's"
+    assert (
+        "esp32internalgpiopin_id)"
+        in main_cpp.splitlines()[
+            next(
+                i
+                for i, line in enumerate(main_cpp.splitlines())
+                if "ow_bus1->set_pin(" in line
+            )
+        ]
+    ), "bus1 must use its own pin object, not bus2's"
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +307,9 @@ def test_two_buses_esp8266_have_independent_pins(
 
     # The two set_pin() calls must reference different pin objects
     pin_lines = [
-        line for line in main_cpp.splitlines() if "->set_pin(" in line and "ow_bus" in line
+        line
+        for line in main_cpp.splitlines()
+        if "->set_pin(" in line and "ow_bus" in line
     ]
     assert len(pin_lines) == 2
     assert pin_lines[0] != pin_lines[1], (
