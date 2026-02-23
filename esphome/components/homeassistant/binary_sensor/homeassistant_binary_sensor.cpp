@@ -1,14 +1,15 @@
 #include "homeassistant_binary_sensor.h"
-#include "esphome/core/log.h"
 #include "esphome/components/api/api_server.h"
+#include "esphome/core/log.h"
+#include "esphome/core/string_ref.h"
 
 namespace esphome {
 namespace homeassistant {
 
-static const char *TAG = "homeassistant.binary_sensor";
+static const char *const TAG = "homeassistant.binary_sensor";
 
 void HomeassistantBinarySensor::setup() {
-  api::global_api_server->subscribe_home_assistant_state(this->entity_id_, [this](std::string state) {
+  api::global_api_server->subscribe_home_assistant_state(this->entity_id_, this->attribute_, [this](StringRef state) {
     auto val = parse_on_off(state.c_str());
     switch (val) {
       case PARSE_NONE:
@@ -18,11 +19,16 @@ void HomeassistantBinarySensor::setup() {
       case PARSE_ON:
       case PARSE_OFF:
         bool new_state = val == PARSE_ON;
-        ESP_LOGD(TAG, "'%s': Got state %s", this->entity_id_.c_str(), ONOFF(new_state));
-        if (this->initial_)
+        if (this->attribute_ != nullptr) {
+          ESP_LOGD(TAG, "'%s::%s': Got attribute state %s", this->entity_id_, this->attribute_, ONOFF(new_state));
+        } else {
+          ESP_LOGD(TAG, "'%s': Got state %s", this->entity_id_, ONOFF(new_state));
+        }
+        if (this->initial_) {
           this->publish_initial_state(new_state);
-        else
+        } else {
           this->publish_state(new_state);
+        }
         break;
     }
     this->initial_ = false;
@@ -30,7 +36,10 @@ void HomeassistantBinarySensor::setup() {
 }
 void HomeassistantBinarySensor::dump_config() {
   LOG_BINARY_SENSOR("", "Homeassistant Binary Sensor", this);
-  ESP_LOGCONFIG(TAG, "  Entity ID: '%s'", this->entity_id_.c_str());
+  ESP_LOGCONFIG(TAG, "  Entity ID: '%s'", this->entity_id_);
+  if (this->attribute_ != nullptr) {
+    ESP_LOGCONFIG(TAG, "  Attribute: '%s'", this->attribute_);
+  }
 }
 float HomeassistantBinarySensor::get_setup_priority() const { return setup_priority::AFTER_WIFI; }
 

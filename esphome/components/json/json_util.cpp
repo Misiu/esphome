@@ -1,129 +1,149 @@
 #include "json_util.h"
 #include "esphome/core/log.h"
 
+// ArduinoJson::Allocator is included via ArduinoJson.h in json_util.h
+
 namespace esphome {
 namespace json {
 
-static const char *TAG = "json";
+static const char *const TAG = "json";
 
-static char *global_json_build_buffer = nullptr;
-static size_t global_json_build_buffer_size = 0;
+#ifdef USE_PSRAM
+// Global allocator that outlives all JsonDocuments returned by parse_json()
+// This prevents dangling pointer issues when JsonDocuments are returned from functions
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables) - Must be mutable for ArduinoJson::Allocator
+static SpiRamAllocator global_json_allocator;
+#endif
 
-void reserve_global_json_build_buffer(size_t required_size) {
-  if (global_json_build_buffer_size == 0 || global_json_build_buffer_size < required_size) {
-    delete[] global_json_build_buffer;
-    global_json_build_buffer_size = std::max(required_size, global_json_build_buffer_size * 2);
-
-    size_t remainder = global_json_build_buffer_size % 16U;
-    if (remainder != 0)
-      global_json_build_buffer_size += 16 - remainder;
-
-    global_json_build_buffer = new char[global_json_build_buffer_size];
-  }
-}
-
-const char *build_json(const json_build_t &f, size_t *length) {
-  global_json_buffer.clear();
-  JsonObject &root = global_json_buffer.createObject();
-
+SerializationBuffer<> build_json(const json_build_t &f) {
+  // NOLINTBEGIN(clang-analyzer-cplusplus.NewDeleteLeaks) false positive with ArduinoJson
+  JsonBuilder builder;
+  JsonObject root = builder.root();
   f(root);
+  return builder.serialize();
+  // NOLINTEND(clang-analyzer-cplusplus.NewDeleteLeaks)
+}
 
-  // The Json buffer size gives us a good estimate for the required size.
-  // Usually, it's a bit larger than the actual required string size
-  //             | JSON Buffer Size | String Size |
-  // Discovery   | 388              | 351         |
-  // Discovery   | 372              | 356         |
-  // Discovery   | 336              | 311         |
-  // Discovery   | 408              | 393         |
-  reserve_global_json_build_buffer(global_json_buffer.size());
-  size_t bytes_written = root.printTo(global_json_build_buffer, global_json_build_buffer_size);
+bool parse_json(const std::string &data, const json_parse_t &f) {
+  // NOLINTNEXTLINE(clang-analyzer-cplusplus.NewDeleteLeaks) false positive with ArduinoJson
+  return parse_json(reinterpret_cast<const uint8_t *>(data.c_str()), data.size(), f);
+}
 
-  if (bytes_written >= global_json_build_buffer_size - 1) {
-    reserve_global_json_build_buffer(root.measureLength() + 1);
-    bytes_written = root.printTo(global_json_build_buffer, global_json_build_buffer_size);
+bool parse_json(const uint8_t *data, size_t len, const json_parse_t &f) {
+  // NOLINTBEGIN(clang-analyzer-cplusplus.NewDeleteLeaks) false positive with ArduinoJson
+  JsonDocument doc = parse_json(data, len);
+  if (doc.overflowed() || doc.isNull())
+    return false;
+  return f(doc.as<JsonObject>());
+  // NOLINTEND(clang-analyzer-cplusplus.NewDeleteLeaks)
+}
+
+JsonDocument parse_json(const uint8_t *data, size_t len) {
+  // NOLINTBEGIN(clang-analyzer-cplusplus.NewDeleteLeaks) false positive with ArduinoJson
+  if (data == nullptr || len == 0) {
+    ESP_LOGE(TAG, "No data to parse");
+    return JsonObject();  // return unbound object
+  }
+#ifdef USE_PSRAM
+  JsonDocument json_document(&global_json_allocator);
+#else
+  JsonDocument json_document;
+#endif
+  if (json_document.overflowed()) {
+    ESP_LOGE(TAG, "Could not allocate memory for JSON document!");
+    return JsonObject();  // return unbound object
+  }
+  DeserializationError err = deserializeJson(json_document, data, len);
+
+  if (err == DeserializationError::Ok) {
+    return json_document;
+  } else if (err == DeserializationError::NoMemory) {
+    ESP_LOGE(TAG, "Can not allocate more memory for deserialization. Consider making source string smaller");
+    return JsonObject();  // return unbound object
+  }
+  ESP_LOGE(TAG, "Parse error: %s", err.c_str());
+  return JsonObject();  // return unbound object
+  // NOLINTEND(clang-analyzer-cplusplus.NewDeleteLeaks)
+}
+
+SerializationBuffer<> JsonBuilder::serialize() {
+  // ===========================================================================================
+  // CRITICAL: NRVO (Named Return Value Optimization) - DO NOT REFACTOR WITHOUT UNDERSTANDING
+  // ===========================================================================================
+  //
+  // This function is carefully structured to enable NRVO. The compiler constructs `result`
+  // directly in the caller's stack frame, eliminating the move constructor call entirely.
+  //
+  // WITHOUT NRVO: Each return would trigger SerializationBuffer's move constructor, which
+  // must memcpy up to 512 bytes of stack buffer content. This happens on EVERY JSON
+  // serialization (sensor updates, web server responses, MQTT publishes, etc.).
+  //
+  // WITH NRVO: Zero memcpy, zero move constructor overhead. The buffer lives directly
+  // where the caller needs it.
+  //
+  // Requirements for NRVO to work:
+  //   1. Single named variable (`result`) returned from ALL paths
+  //   2. All paths must return the SAME variable (not different variables)
+  //   3. No std::move() on the return statement
+  //
+  // If you must modify this function:
+  //   - Keep a single `result` variable declared at the top
+  //   - All code paths must return `result` (not a different variable)
+  //   - Verify NRVO still works by checking the disassembly for move constructor calls
+  //   - Test: objdump -d -C firmware.elf | grep "SerializationBuffer.*SerializationBuffer"
+  //     Should show only destructor, NOT move constructor
+  //
+  // Try stack buffer first. 640 bytes covers 99.9% of JSON payloads (sensors ~200B,
+  // lights ~170B, climate ~500-700B). Only entities with 40+ options exceed this.
+  //
+  // IMPORTANT: ArduinoJson's serializeJson() with a bounded buffer returns the actual
+  // bytes written (truncated count), NOT the would-be size like snprintf(). When the
+  // payload exceeds the buffer, the return value equals the buffer capacity. The heap
+  // fallback doubles the buffer size until the payload fits. This avoids instantiating
+  // measureJson()'s DummyWriter templates (~736 bytes flash) at the cost of temporarily
+  // over-allocating heap (at most 2x) for the rare payloads that exceed 640 bytes.
+  //
+  // ===========================================================================================
+  constexpr size_t buf_size = SerializationBuffer<>::BUFFER_SIZE;
+  SerializationBuffer<> result(buf_size - 1);  // Max content size (reserve 1 for null)
+
+  if (doc_.overflowed()) {
+    ESP_LOGE(TAG, "JSON document overflow");
+    auto *buf = result.data_writable_();
+    buf[0] = '{';
+    buf[1] = '}';
+    buf[2] = '\0';
+    result.set_size_(2);
+    return result;
   }
 
-  *length = bytes_written;
-  return global_json_build_buffer;
-}
-void parse_json(const std::string &data, const json_parse_t &f) {
-  global_json_buffer.clear();
-  JsonObject &root = global_json_buffer.parseObject(data);
-
-  if (!root.success()) {
-    ESP_LOGW(TAG, "Parsing JSON failed.");
-    return;
+  size_t size = serializeJson(doc_, result.data_writable_(), buf_size);
+  if (size < buf_size) {
+    // Fits in stack buffer - update size to actual length
+    result.set_size_(size);
+    return result;
   }
 
-  f(root);
-}
-std::string build_json(const json_build_t &f) {
-  size_t len;
-  const char *c_str = build_json(f, &len);
-  return std::string(c_str, len);
-}
-
-VectorJsonBuffer::String::String(VectorJsonBuffer *parent) : parent_(parent), start_(parent->size_) {}
-void VectorJsonBuffer::String::append(char c) const {
-  char *last = static_cast<char *>(this->parent_->do_alloc(1));
-  *last = c;
-}
-const char *VectorJsonBuffer::String::c_str() const {
-  this->append('\0');
-  return &this->parent_->buffer_[this->start_];
-}
-void VectorJsonBuffer::clear() {
-  for (char *block : this->free_blocks_)
-    free(block);  // NOLINT
-
-  this->size_ = 0;
-  this->free_blocks_.clear();
-}
-VectorJsonBuffer::String VectorJsonBuffer::startString() { return {this}; }  // NOLINT
-void *VectorJsonBuffer::alloc(size_t bytes) {
-  // Make sure memory addresses are aligned
-  uint32_t new_size = round_size_up(this->size_);
-  this->resize(new_size);
-  return this->do_alloc(bytes);
-}
-void *VectorJsonBuffer::do_alloc(size_t bytes) {  // NOLINT
-  const uint32_t begin = this->size_;
-  this->resize(begin + bytes);
-  return &this->buffer_[begin];
-}
-void VectorJsonBuffer::resize(size_t size) {  // NOLINT
-  if (size <= this->size_) {
-    this->size_ = size;
-    return;
+  // Payload exceeded stack buffer. Double the buffer and retry until it fits.
+  // In practice, one iteration (1024 bytes) covers all known entity types.
+  // Payloads exceeding 1024 bytes are not known to exist in real configurations.
+  // Cap at 5120 as a safety limit to prevent runaway allocation.
+  constexpr size_t max_heap_size = 5120;
+  size_t heap_size = buf_size * 2;
+  while (heap_size <= max_heap_size) {
+    result.reallocate_heap_(heap_size - 1);
+    size = serializeJson(doc_, result.data_writable_(), heap_size);
+    if (size < heap_size) {
+      result.set_size_(size);
+      return result;
+    }
+    heap_size *= 2;
   }
-
-  this->reserve(size);
-  this->size_ = size;
+  // Payload exceeds 5120 bytes - return truncated result
+  ESP_LOGW(TAG, "JSON payload too large, truncated to %zu bytes", size);
+  result.set_size_(size);
+  return result;
 }
-void VectorJsonBuffer::reserve(size_t size) {  // NOLINT
-  if (size <= this->capacity_)
-    return;
-
-  uint32_t target_capacity = this->capacity_;
-  if (this->capacity_ == 0) {
-    // lazily initialize with a reasonable size
-    target_capacity = JSON_OBJECT_SIZE(16);
-  }
-  while (target_capacity < size)
-    target_capacity *= 2;
-
-  char *old_buffer = this->buffer_;
-  this->buffer_ = new char[target_capacity];
-  if (old_buffer != nullptr && this->capacity_ != 0) {
-    this->free_blocks_.push_back(old_buffer);
-    memcpy(this->buffer_, old_buffer, this->capacity_);
-  }
-  this->capacity_ = target_capacity;
-}
-
-size_t VectorJsonBuffer::size() const { return this->size_; }
-
-VectorJsonBuffer global_json_buffer;
 
 }  // namespace json
 }  // namespace esphome

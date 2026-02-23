@@ -1,26 +1,26 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/entity_base.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/log.h"
 #include "esphome/core/preferences.h"
+
 #include "cover_traits.h"
 
-namespace esphome {
-namespace cover {
+namespace esphome::cover {
 
-const extern float COVER_OPEN;
-const extern float COVER_CLOSED;
+static constexpr float COVER_OPEN = 1.0f;
+static constexpr float COVER_CLOSED = 0.0f;
 
 #define LOG_COVER(prefix, type, obj) \
-  if (obj != nullptr) { \
-    ESP_LOGCONFIG(TAG, "%s%s '%s'", prefix, type, obj->get_name().c_str()); \
-    auto traits_ = obj->get_traits(); \
+  if ((obj) != nullptr) { \
+    ESP_LOGCONFIG(TAG, "%s%s '%s'", prefix, LOG_STR_LITERAL(type), (obj)->get_name().c_str()); \
+    auto traits_ = (obj)->get_traits(); \
     if (traits_.get_is_assumed_state()) { \
       ESP_LOGCONFIG(TAG, "%s  Assumed State: YES", prefix); \
     } \
-    if (!obj->get_device_class().empty()) { \
-      ESP_LOGCONFIG(TAG, "%s  Device Class: '%s'", prefix, obj->get_device_class().c_str()); \
-    } \
+    LOG_ENTITY_DEVICE_CLASS(TAG, prefix, *(obj)); \
   }
 
 class Cover;
@@ -29,7 +29,7 @@ class CoverCall {
  public:
   CoverCall(Cover *parent);
 
-  /// Set the command as a string, "STOP", "OPEN", "CLOSE".
+  /// Set the command as a string, "STOP", "OPEN", "CLOSE", "TOGGLE".
   CoverCall &set_command(const char *command);
   /// Set the command to open the cover.
   CoverCall &set_command_open();
@@ -37,6 +37,8 @@ class CoverCall {
   CoverCall &set_command_close();
   /// Set the command to stop the cover.
   CoverCall &set_command_stop();
+  /// Set the command to toggle the cover.
+  CoverCall &set_command_toggle();
   /// Set the call to a certain target position.
   CoverCall &set_position(float position);
   /// Set the call to a certain target tilt.
@@ -50,6 +52,7 @@ class CoverCall {
   const optional<float> &get_position() const;
   bool get_stop() const;
   const optional<float> &get_tilt() const;
+  const optional<bool> &get_toggle() const;
 
  protected:
   void validate_();
@@ -58,6 +61,7 @@ class CoverCall {
   bool stop_{false};
   optional<float> position_{};
   optional<float> tilt_{};
+  optional<bool> toggle_{};
 };
 
 /// Struct used to store the restored state of a cover
@@ -81,7 +85,7 @@ enum CoverOperation : uint8_t {
   COVER_OPERATION_CLOSING,
 };
 
-const char *cover_operation_to_str(CoverOperation op);
+const LogString *cover_operation_to_str(CoverOperation op);
 
 /** Base class for all cover devices.
  *
@@ -103,42 +107,23 @@ const char *cover_operation_to_str(CoverOperation op);
  * to control all values of the cover. Also implement get_traits() to return what operations
  * the cover supports.
  */
-class Cover : public Nameable {
+class Cover : public EntityBase, public EntityBase_DeviceClass {
  public:
   explicit Cover();
-  explicit Cover(const std::string &name);
 
   /// The current operation of the cover (idle, opening, closing).
   CoverOperation current_operation{COVER_OPERATION_IDLE};
-  union {
-    /** The position of the cover from 0.0 (fully closed) to 1.0 (fully open).
-     *
-     * For binary covers this is always equals to 0.0 or 1.0 (see also COVER_OPEN and
-     * COVER_CLOSED constants).
-     */
-    float position;
-    ESPDEPRECATED("<cover>.state is deprecated, please use .position instead") float state;
-  };
+  /** The position of the cover from 0.0 (fully closed) to 1.0 (fully open).
+   *
+   * For binary covers this is always equals to 0.0 or 1.0 (see also COVER_OPEN and
+   * COVER_CLOSED constants).
+   */
+  float position;
   /// The current tilt value of the cover from 0.0 to 1.0.
   float tilt{COVER_OPEN};
 
   /// Construct a new cover call used to control the cover.
   CoverCall make_call();
-  /** Open the cover.
-   *
-   * This is a legacy method and may be removed later, please use `.make_call()` instead.
-   */
-  void open();
-  /** Close the cover.
-   *
-   * This is a legacy method and may be removed later, please use `.make_call()` instead.
-   */
-  void close();
-  /** Stop the cover.
-   *
-   * This is a legacy method and may be removed later, please use `.make_call()` instead.
-   */
-  void stop();
 
   void add_on_state_callback(std::function<void()> &&f);
 
@@ -152,8 +137,6 @@ class Cover : public Nameable {
   void publish_state(bool save = true);
 
   virtual CoverTraits get_traits() = 0;
-  void set_device_class(const std::string &device_class);
-  std::string get_device_class();
 
   /// Helper method to check if the cover is fully open. Equivalent to comparing .position against 1.0
   bool is_fully_open() const;
@@ -164,16 +147,12 @@ class Cover : public Nameable {
   friend CoverCall;
 
   virtual void control(const CoverCall &call) = 0;
-  virtual std::string device_class();
 
   optional<CoverRestoreState> restore_state_();
-  uint32_t hash_base() override;
 
-  CallbackManager<void()> state_callback_{};
-  optional<std::string> device_class_override_{};
+  LazyCallbackManager<void()> state_callback_{};
 
   ESPPreferenceObject rtc_;
 };
 
-}  // namespace cover
-}  // namespace esphome
+}  // namespace esphome::cover

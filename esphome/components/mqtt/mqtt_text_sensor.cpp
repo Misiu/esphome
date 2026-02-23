@@ -1,20 +1,25 @@
 #include "mqtt_text_sensor.h"
 #include "esphome/core/log.h"
 
+#include "mqtt_const.h"
+
+#ifdef USE_MQTT
 #ifdef USE_TEXT_SENSOR
 
-namespace esphome {
-namespace mqtt {
+namespace esphome::mqtt {
 
-static const char *TAG = "mqtt.text_sensor";
+static const char *const TAG = "mqtt.text_sensor";
 
 using namespace esphome::text_sensor;
 
-MQTTTextSensor::MQTTTextSensor(TextSensor *sensor) : MQTTComponent(), sensor_(sensor) {}
-void MQTTTextSensor::send_discovery(JsonObject &root, mqtt::SendDiscoveryConfig &config) {
-  if (!this->sensor_->get_icon().empty())
-    root["icon"] = this->sensor_->get_icon();
-
+MQTTTextSensor::MQTTTextSensor(TextSensor *sensor) : sensor_(sensor) {}
+void MQTTTextSensor::send_discovery(JsonObject root, mqtt::SendDiscoveryConfig &config) {
+  // NOLINTBEGIN(clang-analyzer-cplusplus.NewDeleteLeaks) false positive with ArduinoJson
+  const auto device_class = this->sensor_->get_device_class_ref();
+  if (!device_class.empty()) {
+    root[MQTT_DEVICE_CLASS] = device_class;
+  }
+  // NOLINTEND(clang-analyzer-cplusplus.NewDeleteLeaks)
   config.command_topic = false;
 }
 void MQTTTextSensor::setup() {
@@ -26,7 +31,10 @@ void MQTTTextSensor::dump_config() {
   LOG_MQTT_COMPONENT(true, false);
 }
 
-bool MQTTTextSensor::publish_state(const std::string &value) { return this->publish(this->get_state_topic_(), value); }
+bool MQTTTextSensor::publish_state(const std::string &value) {
+  char topic_buf[MQTT_DEFAULT_TOPIC_MAX_LEN];
+  return this->publish(this->get_state_topic_to_(topic_buf), value.data(), value.size());
+}
 bool MQTTTextSensor::send_initial_state() {
   if (this->sensor_->has_state()) {
     return this->publish_state(this->sensor_->state);
@@ -34,12 +42,10 @@ bool MQTTTextSensor::send_initial_state() {
     return true;
   }
 }
-bool MQTTTextSensor::is_internal() { return this->sensor_->is_internal(); }
-std::string MQTTTextSensor::component_type() const { return "sensor"; }
-std::string MQTTTextSensor::friendly_name() const { return this->sensor_->get_name(); }
-std::string MQTTTextSensor::unique_id() { return this->sensor_->unique_id(); }
+MQTT_COMPONENT_TYPE(MQTTTextSensor, "sensor")
+const EntityBase *MQTTTextSensor::get_entity() const { return this->sensor_; }
 
-}  // namespace mqtt
-}  // namespace esphome
+}  // namespace esphome::mqtt
 
 #endif
+#endif  // USE_MQTT

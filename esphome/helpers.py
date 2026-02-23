@@ -1,9 +1,44 @@
-import codecs
+from __future__ import annotations
 
+from contextlib import suppress
+import ipaddress
 import logging
 import os
+from pathlib import Path
+import platform
+import re
+import shutil
+import stat
+import tempfile
+from typing import TYPE_CHECKING
+from urllib.parse import urlparse
+
+from esphome.const import __version__ as ESPHOME_VERSION
+
+if TYPE_CHECKING:
+    from esphome.address_cache import AddressCache
+
+# Type aliases for socket address information
+AddrInfo = tuple[
+    int,  # family (AF_INET, AF_INET6, etc.)
+    int,  # type (SOCK_STREAM, SOCK_DGRAM, etc.)
+    int,  # proto (IPPROTO_TCP, etc.)
+    str,  # canonname
+    tuple[str, int] | tuple[str, int, int, int],  # sockaddr (IPv4 or IPv6)
+]
+IPv4SockAddr = tuple[str, int]  # (host, port)
+IPv6SockAddr = tuple[str, int, int, int]  # (host, port, flowinfo, scope_id)
+SockAddr = IPv4SockAddr | IPv6SockAddr
 
 _LOGGER = logging.getLogger(__name__)
+
+IS_MACOS = platform.system() == "Darwin"
+IS_WINDOWS = platform.system() == "Windows"
+IS_LINUX = platform.system() == "Linux"
+
+# FNV-1 hash constants (must match C++ in esphome/core/helpers.h)
+FNV1_OFFSET_BASIS = 2166136261
+FNV1_PRIME = 16777619
 
 
 def ensure_unique_string(preferred_string, current_strings):
@@ -19,232 +54,470 @@ def ensure_unique_string(preferred_string, current_strings):
     return test_string
 
 
-def indent_all_but_first_and_last(text, padding='  '):
+def fnv1_hash(string: str) -> int:
+    """FNV-1 32-bit hash function (multiply then XOR)."""
+    hash_value = FNV1_OFFSET_BASIS
+    for char in string:
+        hash_value = (hash_value * FNV1_PRIME) & 0xFFFFFFFF
+        hash_value ^= ord(char)
+    return hash_value
+
+
+def fnv1a_32bit_hash(string: str) -> int:
+    """FNV-1a 32-bit hash function (XOR then multiply).
+
+    Note: This uses 32-bit hash instead of 64-bit for several reasons:
+    1. ESPHome targets 32-bit microcontrollers with limited RAM (often <320KB)
+    2. Using 64-bit hashes would double the RAM usage for storing IDs
+    3. 64-bit operations are slower on 32-bit processors
+
+    While there's a ~50% collision probability at ~77,000 unique IDs,
+    ESPHome validates for collisions at compile time, preventing any
+    runtime issues. In practice, most ESPHome installations only have
+    a handful of area_ids and device_ids (typically <10 areas and <100
+    devices), making collisions virtually impossible.
+    """
+    hash_value = FNV1_OFFSET_BASIS
+    for char in string:
+        hash_value ^= ord(char)
+        hash_value = (hash_value * FNV1_PRIME) & 0xFFFFFFFF
+    return hash_value
+
+
+def fnv1_hash_object_id(name: str) -> int:
+    """Compute FNV-1 hash of name with snake_case + sanitize transformations.
+
+    IMPORTANT: Must produce same result as C++ fnv1_hash_object_id() in helpers.h.
+    Used for pre-computing entity object_id hashes at code generation time.
+    """
+    return fnv1_hash(sanitize(snake_case(name)))
+
+
+def strip_accents(value: str) -> str:
+    """Remove accents from a string."""
+    import unicodedata
+
+    return "".join(
+        c
+        for c in unicodedata.normalize("NFD", str(value))
+        if unicodedata.category(c) != "Mn"
+    )
+
+
+def slugify(value: str) -> str:
+    """Convert a string to a valid C++ identifier slug."""
+    from esphome.const import ALLOWED_NAME_CHARS
+
+    value = (
+        strip_accents(value)
+        .lower()
+        .replace(" ", "_")
+        .replace("-", "_")
+        .replace("__", "_")
+        .strip("_")
+    )
+    return "".join(c for c in value if c in ALLOWED_NAME_CHARS)
+
+
+def indent_all_but_first_and_last(text, padding="  "):
     lines = text.splitlines(True)
     if len(lines) <= 2:
         return text
-    return lines[0] + ''.join(padding + line for line in lines[1:-1]) + lines[-1]
+    return lines[0] + "".join(padding + line for line in lines[1:-1]) + lines[-1]
 
 
-def indent_list(text, padding='  '):
+def indent_list(text, padding="  "):
     return [padding + line for line in text.splitlines()]
 
 
-def indent(text, padding='  '):
-    return '\n'.join(indent_list(text, padding))
+def indent(text, padding="  "):
+    return "\n".join(indent_list(text, padding))
 
 
 # From https://stackoverflow.com/a/14945195/8924614
-def cpp_string_escape(string, encoding='utf-8'):
-    def _should_escape(byte):  # type: (int) -> bool
+def cpp_string_escape(string, encoding="utf-8"):
+    def _should_escape(byte: int) -> bool:
         if not 32 <= byte < 127:
             return True
-        if byte in (ord('\\'), ord('"')):
-            return True
-        return False
+        return byte in (ord("\\"), ord('"'))
 
     if isinstance(string, str):
         string = string.encode(encoding)
-    result = ''
+    result = ""
     for character in string:
         if _should_escape(character):
-            result += f'\\{character:03o}'
+            result += f"\\{character:03o}"
         else:
             result += chr(character)
-    return '"' + result + '"'
-
-
-def color(the_color, message=''):
-    from colorlog.escape_codes import escape_codes, parse_colors
-
-    if not message:
-        res = parse_colors(the_color)
-    else:
-        res = parse_colors(the_color) + message + escape_codes['reset']
-
-    return res
+    return f'"{result}"'
 
 
 def run_system_command(*args):
     import subprocess
 
-    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = p.communicate()
-    rc = p.returncode
-    return rc, stdout, stderr
+    with subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, close_fds=False
+    ) as p:
+        stdout, stderr = p.communicate()
+        rc = p.returncode
+        return rc, stdout, stderr
 
 
-def mkdir_p(path):
+def mkdir_p(path: Path):
     if not path:
         # Empty path - means create current dir
         return
     try:
-        os.makedirs(path)
+        path.mkdir(parents=True, exist_ok=True)
     except OSError as err:
         import errno
-        if err.errno == errno.EEXIST and os.path.isdir(path):
+
+        if err.errno == errno.EEXIST and path.is_dir():
             pass
         else:
             from esphome.core import EsphomeError
-            raise EsphomeError(f"Error creating directories {path}: {err}")
+
+            raise EsphomeError(f"Error creating directories {path}: {err}") from err
 
 
 def is_ip_address(host):
-    parts = host.split('.')
-    if len(parts) != 4:
-        return False
     try:
-        for p in parts:
-            int(p)
+        ipaddress.ip_address(host)
         return True
     except ValueError:
         return False
 
 
-def _resolve_with_zeroconf(host):
-    from esphome.core import EsphomeError
-    from esphome.zeroconf import Zeroconf
-
-    try:
-        zc = Zeroconf()
-    except Exception:
-        raise EsphomeError("Cannot start mDNS sockets, is this a docker container without "
-                           "host network mode?")
-    try:
-        info = zc.resolve_host(host + '.')
-    except Exception as err:
-        raise EsphomeError(f"Error resolving mDNS hostname: {err}")
-    finally:
-        zc.close()
-    if info is None:
-        raise EsphomeError("Error resolving address with mDNS: Did not respond. "
-                           "Maybe the device is offline.")
-    return info
+def addr_preference_(res: AddrInfo) -> int:
+    # Trivial alternative to RFC6724 sorting. Put sane IPv6 first, then
+    # Legacy IP, then IPv6 link-local addresses without an actual link.
+    sa = res[4]
+    ip = ipaddress.ip_address(sa[0])
+    if ip.version == 4:
+        return 2
+    if ip.is_link_local and sa[3] == 0:
+        return 3
+    return 1
 
 
-def resolve_ip_address(host):
-    from esphome.core import EsphomeError
+def _add_ip_addresses_to_addrinfo(
+    addresses: list[str], port: int, res: list[AddrInfo]
+) -> None:
+    """Helper to add IP addresses to addrinfo results with error handling."""
     import socket
 
-    errs = []
-
-    if host.endswith('.local'):
+    for addr in addresses:
         try:
-            return _resolve_with_zeroconf(host)
-        except EsphomeError as err:
-            errs.append(str(err))
+            res += socket.getaddrinfo(
+                addr, port, proto=socket.IPPROTO_TCP, flags=socket.AI_NUMERICHOST
+            )
+        except OSError:
+            _LOGGER.debug("Failed to parse IP address '%s'", addr)
 
-    try:
-        return socket.gethostbyname(host)
-    except OSError as err:
-        errs.append(str(err))
-        raise EsphomeError("Error resolving IP address: {}"
-                           "".format(', '.join(errs)))
+
+def resolve_ip_address(
+    host: str | list[str], port: int, address_cache: AddressCache | None = None
+) -> list[AddrInfo]:
+    import socket
+
+    # There are five cases here. The host argument could be one of:
+    #  • a *list* of IP addresses discovered by MQTT,
+    #  • a single IP address specified by the user,
+    #  • a .local hostname to be resolved by mDNS,
+    #  • a normal hostname to be resolved in DNS, or
+    #  • A URL from which we should extract the hostname.
+
+    hosts: list[str]
+    if isinstance(host, list):
+        hosts = host
+    else:
+        if not is_ip_address(host):
+            url = urlparse(host)
+            if url.scheme != "":
+                host = url.hostname
+        hosts = [host]
+
+    res: list[AddrInfo] = []
+
+    # Fast path: if all hosts are already IP addresses
+    if all(is_ip_address(h) for h in hosts):
+        _add_ip_addresses_to_addrinfo(hosts, port, res)
+        # Sort by preference
+        res.sort(key=addr_preference_)
+        return res
+
+    # Process hosts
+
+    uncached_hosts: list[str] = []
+
+    for h in hosts:
+        if is_ip_address(h):
+            _add_ip_addresses_to_addrinfo([h], port, res)
+        elif address_cache and (cached := address_cache.get_addresses(h)):
+            _add_ip_addresses_to_addrinfo(cached, port, res)
+        else:
+            # Not cached, need to resolve
+            if address_cache and address_cache.has_cache():
+                _LOGGER.info("Host %s not in cache, will need to resolve", h)
+            uncached_hosts.append(h)
+
+    # If we have uncached hosts (only non-IP hostnames), resolve them
+    if uncached_hosts:
+        from aioesphomeapi.host_resolver import AddrInfo as AioAddrInfo
+
+        from esphome.core import EsphomeError
+        from esphome.resolver import AsyncResolver
+
+        resolver = AsyncResolver(uncached_hosts, port)
+        addr_infos: list[AioAddrInfo] = []
+        try:
+            addr_infos = resolver.resolve()
+        except EsphomeError as err:
+            if not res:
+                # No pre-resolved addresses available, DNS resolution is fatal
+                raise
+            _LOGGER.info("%s (using %d already resolved IP addresses)", err, len(res))
+
+        # Convert aioesphomeapi AddrInfo to our format
+        for addr_info in addr_infos:
+            sockaddr = addr_info.sockaddr
+            if addr_info.family == socket.AF_INET6:
+                # IPv6
+                sockaddr_tuple = (
+                    sockaddr.address,
+                    sockaddr.port,
+                    sockaddr.flowinfo,
+                    sockaddr.scope_id,
+                )
+            else:
+                # IPv4
+                sockaddr_tuple = (sockaddr.address, sockaddr.port)
+
+            res.append(
+                (
+                    addr_info.family,
+                    addr_info.type,
+                    addr_info.proto,
+                    "",  # canonname
+                    sockaddr_tuple,
+                )
+            )
+
+    # Sort by preference
+    res.sort(key=addr_preference_)
+    return res
+
+
+def sort_ip_addresses(address_list: list[str]) -> list[str]:
+    """Takes a list of IP addresses in string form, e.g. from mDNS or MQTT,
+    and sorts them into the best order to actually try connecting to them.
+
+    This is roughly based on RFC6724 but a lot simpler: First we choose
+    IPv6 addresses, then Legacy IP addresses, and lowest priority is
+    link-local IPv6 addresses that don't have a link specified (which
+    are useless, but mDNS does provide them in that form). Addresses
+    which cannot be parsed are silently dropped.
+    """
+    import socket
+
+    # First "resolve" all the IP addresses to getaddrinfo() tuples of the form
+    # (family, type, proto, canonname, sockaddr)
+    res: list[AddrInfo] = []
+    _add_ip_addresses_to_addrinfo(address_list, 0, res)
+
+    # Now use that information to sort them.
+    res.sort(key=addr_preference_)
+
+    # Finally, turn the getaddrinfo() tuples back into plain hostnames.
+    return [socket.getnameinfo(r[4], socket.NI_NUMERICHOST)[0] for r in res]
 
 
 def get_bool_env(var, default=False):
-    return bool(os.getenv(var, default))
+    value = os.getenv(var, default)
+    if isinstance(value, str):
+        value = value.lower()
+        if value in ["1", "true"]:
+            return True
+        if value in ["0", "false"]:
+            return False
+    return bool(value)
 
 
-def is_hassio():
-    return get_bool_env('ESPHOME_IS_HASSIO')
+def get_str_env(var, default=None):
+    return str(os.getenv(var, default))
 
 
-def walk_files(path):
+def get_int_env(var, default=0):
+    return int(os.getenv(var, default))
+
+
+def is_ha_addon():
+    return get_bool_env("ESPHOME_IS_HA_ADDON")
+
+
+def rmtree(path: Path | str) -> None:
+    """Remove a directory tree, handling read-only files on Windows.
+
+    On Windows, git pack files and other files may be marked read-only,
+    causing shutil.rmtree to fail. This handles that by removing the
+    read-only flag and retrying.
+    """
+
+    def _onerror(func, path, exc_info):
+        if os.access(path, os.W_OK):
+            raise exc_info[1].with_traceback(exc_info[2])
+        os.chmod(path, stat.S_IWUSR | stat.S_IRUSR)
+        func(path)
+
+    shutil.rmtree(path, onerror=_onerror)
+
+
+def walk_files(path: Path):
     for root, _, files in os.walk(path):
         for name in files:
-            yield os.path.join(root, name)
+            yield Path(root) / name
 
 
-def read_file(path):
+def read_file(path: Path) -> str:
     try:
-        with codecs.open(path, 'r', encoding='utf-8') as f_handle:
-            return f_handle.read()
+        return path.read_text(encoding="utf-8")
     except OSError as err:
         from esphome.core import EsphomeError
-        raise EsphomeError(f"Error reading file {path}: {err}")
+
+        raise EsphomeError(f"Error reading file {path}: {err}") from err
     except UnicodeDecodeError as err:
         from esphome.core import EsphomeError
-        raise EsphomeError(f"Error reading file {path}: {err}")
+
+        raise EsphomeError(f"Error reading file {path}: {err}") from err
 
 
-def _write_file(path, text):
-    import tempfile
-    directory = os.path.dirname(path)
-    mkdir_p(directory)
+def _write_file(
+    path: Path,
+    text: str | bytes,
+    private: bool = False,
+) -> None:
+    """Atomically writes `text` to the given path.
 
-    tmp_path = None
+    Automatically creates all parent directories.
+    """
     data = text
     if isinstance(text, str):
         data = text.encode()
+
+    directory = path.parent
+    directory.mkdir(exist_ok=True, parents=True)
+
+    tmp_filename: Path | None = None
+    missing_fchmod = False
     try:
-        with tempfile.NamedTemporaryFile(mode="wb", dir=directory, delete=False) as f_handle:
-            tmp_path = f_handle.name
+        # Modern versions of Python tempfile create this file with mode 0o600
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=directory, delete=False
+        ) as f_handle:
             f_handle.write(data)
-        # Newer tempfile implementations create the file with mode 0o600
-        os.chmod(tmp_path, 0o644)
-        # If destination exists, will be overwritten
-        os.replace(tmp_path, path)
+            tmp_filename = Path(f_handle.name)
+
+            if not private:
+                try:
+                    os.fchmod(f_handle.fileno(), 0o644)
+                except AttributeError:
+                    # os.fchmod is not available on Windows
+                    missing_fchmod = True
+        shutil.move(tmp_filename, path)
+        if missing_fchmod:
+            path.chmod(0o644)
     finally:
-        if tmp_path is not None and os.path.exists(tmp_path):
+        if tmp_filename and tmp_filename.exists():
             try:
-                os.remove(tmp_path)
+                tmp_filename.unlink()
             except OSError as err:
-                _LOGGER.error("Write file cleanup failed: %s", err)
+                # If we are cleaning up then something else went wrong, so
+                # we should suppress likely follow-on errors in the cleanup
+                _LOGGER.error(
+                    "File replacement cleanup failed for %s while saving %s: %s",
+                    tmp_filename,
+                    path,
+                    err,
+                )
 
 
-def write_file(path, text):
+def write_file(path: Path, text: str | bytes, private: bool = False) -> None:
     try:
-        _write_file(path, text)
-    except OSError:
-        from esphome.core import EsphomeError
-        raise EsphomeError(f"Could not write file at {path}")
-
-
-def write_file_if_changed(path, text):
-    src_content = None
-    if os.path.isfile(path):
-        src_content = read_file(path)
-    if src_content != text:
-        write_file(path, text)
-
-
-def copy_file_if_changed(src, dst):
-    import shutil
-    if file_compare(src, dst):
-        return
-    mkdir_p(os.path.dirname(dst))
-    try:
-        shutil.copy(src, dst)
+        _write_file(path, text, private=private)
     except OSError as err:
         from esphome.core import EsphomeError
-        raise EsphomeError(f"Error copying file {src} to {dst}: {err}")
+
+        raise EsphomeError(f"Could not write file at {path}") from err
+
+
+def write_file_if_changed(path: Path, text: str) -> bool:
+    """Write text to the given path, but not if the contents match already.
+
+    Returns true if the file was changed.
+    """
+    src_content = None
+    if path.is_file():
+        src_content = read_file(path)
+    if src_content == text:
+        return False
+    write_file(path, text)
+    return True
+
+
+def copy_file_if_changed(src: Path, dst: Path) -> bool:
+    """Copy file from src to dst if contents differ.
+
+    Returns True if file was copied, False if files already matched.
+    """
+    if file_compare(src, dst):
+        return False
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.copyfile(src, dst)
+    except OSError as err:
+        if isinstance(err, PermissionError):
+            # Older esphome versions copied over the src file permissions too.
+            # So when the dst file had 444 permissions, the dst file would have those
+            # too and subsequent writes would fail
+
+            # -> delete file (it would be overwritten anyway), and try again
+            # if that fails, use normal error handler
+            with suppress(OSError):
+                os.unlink(dst)
+                shutil.copyfile(src, dst)
+                return True
+
+        from esphome.core import EsphomeError
+
+        raise EsphomeError(f"Error copying file {src} to {dst}: {err}") from err
+    return True
 
 
 def list_starts_with(list_, sub):
     return len(sub) <= len(list_) and all(list_[i] == x for i, x in enumerate(sub))
 
 
-def file_compare(path1, path2):
+def file_compare(path1: Path, path2: Path) -> bool:
     """Return True if the files path1 and path2 have the same contents."""
-    import stat
-
     try:
-        stat1, stat2 = os.stat(path1), os.stat(path2)
+        stat1, stat2 = path1.stat(), path2.stat()
     except OSError:
         # File doesn't exist or another error -> not equal
         return False
 
-    if stat.S_IFMT(stat1.st_mode) != stat.S_IFREG or stat.S_IFMT(stat2.st_mode) != stat.S_IFREG:
+    if (
+        stat.S_IFMT(stat1.st_mode) != stat.S_IFREG
+        or stat.S_IFMT(stat2.st_mode) != stat.S_IFREG
+    ):
         # At least one of them is not a regular file (or does not exist)
         return False
     if stat1.st_size != stat2.st_size:
         # Different sizes
         return False
 
-    bufsize = 8*1024
+    bufsize = 8 * 1024
     # Read files in blocks until a mismatch is found
-    with open(path1, 'rb') as fh1, open(path2, 'rb') as fh2:
+    with path1.open("rb") as fh1, path2.open("rb") as fh2:
         while True:
             blob1, blob2 = fh1.read(bufsize), fh2.read(bufsize)
             if blob1 != blob2:
@@ -258,11 +531,11 @@ def file_compare(path1, path2):
 # A dict of types that need to be converted to heaptypes before a class can be added
 # to the object
 _TYPE_OVERLOADS = {
-    int: type('EInt', (int,), dict()),
-    float: type('EFloat', (float,), dict()),
-    str: type('EStr', (str,), dict()),
-    dict: type('EDict', (str,), dict()),
-    list: type('EList', (list,), dict()),
+    int: type("EInt", (int,), {}),
+    float: type("EFloat", (float,), {}),
+    str: type("EStr", (str,), {}),
+    dict: type("EDict", (dict,), {}),
+    list: type("EList", (list,), {}),
 }
 
 # cache created classes here
@@ -297,3 +570,33 @@ def add_class_to_obj(value, cls):
             if type(value) is type_:  # pylint: disable=unidiomatic-typecheck
                 return add_class_to_obj(func(value), cls)
         raise
+
+
+def snake_case(value):
+    """Same behaviour as `helpers.cpp` method `str_snake_case`."""
+    return value.replace(" ", "_").lower()
+
+
+_DISALLOWED_CHARS = re.compile(r"[^a-zA-Z0-9-_]")
+
+
+def sanitize(value):
+    """Same behaviour as `helpers.cpp` method `str_sanitize`."""
+    return _DISALLOWED_CHARS.sub("_", value)
+
+
+def docs_url(path: str) -> str:
+    """Return the URL to the documentation for a given path."""
+    # Local import to avoid circular import
+    from esphome.config_validation import Version
+
+    version = Version.parse(ESPHOME_VERSION)
+    if version.is_beta:
+        docs_format = "https://beta.esphome.io/{path}"
+    elif version.is_dev:
+        docs_format = "https://next.esphome.io/{path}"
+    else:
+        docs_format = "https://esphome.io/{path}"
+
+    path = path.removeprefix("/")
+    return docs_format.format(path=path)

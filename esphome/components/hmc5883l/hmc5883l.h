@@ -39,7 +39,6 @@ class HMC5883LComponent : public PollingComponent, public i2c::I2CDevice {
  public:
   void setup() override;
   void dump_config() override;
-  float get_setup_priority() const override;
   void update() override;
 
   void set_oversampling(HMC5883LOversampling oversampling) { oversampling_ = oversampling; }
@@ -54,15 +53,16 @@ class HMC5883LComponent : public PollingComponent, public i2c::I2CDevice {
   HMC5883LOversampling oversampling_{HMC5883L_OVERSAMPLING_1};
   HMC5883LDatarate datarate_{HMC5883L_DATARATE_15_0_HZ};
   HMC5883LRange range_{HMC5883L_RANGE_130_UT};
-  sensor::Sensor *x_sensor_;
-  sensor::Sensor *y_sensor_;
-  sensor::Sensor *z_sensor_;
-  sensor::Sensor *heading_sensor_;
+  sensor::Sensor *x_sensor_{nullptr};
+  sensor::Sensor *y_sensor_{nullptr};
+  sensor::Sensor *z_sensor_{nullptr};
+  sensor::Sensor *heading_sensor_{nullptr};
   enum ErrorCode {
     NONE = 0,
     COMMUNICATION_FAILED,
     ID_REGISTERS,
   } error_code_;
+  HighFrequencyLoopRequester high_freq_;
 };
 
 }  // namespace hmc5883l

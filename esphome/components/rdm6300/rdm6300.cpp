@@ -1,10 +1,11 @@
 #include "rdm6300.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
 namespace rdm6300 {
 
-static const char *TAG = "rdm6300";
+static const char *const TAG = "rdm6300";
 
 static const uint8_t RDM6300_START_BYTE = 0x02;
 static const uint8_t RDM6300_END_BYTE = 0x03;
@@ -33,6 +34,8 @@ void rdm6300::RDM6300Component::loop() {
         this->buffer_[this->read_state_ / 2] += value;
       }
       this->read_state_++;
+    } else if (data == 0x0D || data == 0x0A) {
+      // Skip CR/LF bytes (ID-20LA compatibility)
     } else if (data != RDM6300_END_BYTE) {
       ESP_LOGW(TAG, "Invalid end byte from RDM6300!");
       this->read_state_ = RDM6300_STATE_WAITING_FOR_START;
@@ -46,8 +49,7 @@ void rdm6300::RDM6300Component::loop() {
       } else {
         // Valid data
         this->status_clear_warning();
-        const uint32_t result = (uint32_t(this->buffer_[1]) << 24) | (uint32_t(this->buffer_[2]) << 16) |
-                                (uint32_t(this->buffer_[3]) << 8) | this->buffer_[4];
+        const uint32_t result = encode_uint32(this->buffer_[1], this->buffer_[2], this->buffer_[3], this->buffer_[4]);
         bool report = result != last_id_;
         for (auto *card : this->cards_) {
           if (card->process(result)) {
@@ -58,7 +60,7 @@ void rdm6300::RDM6300Component::loop() {
           trig->process(result);
 
         if (report) {
-          ESP_LOGD(TAG, "Found new tag with ID %u", result);
+          ESP_LOGD(TAG, "Found new tag with ID %" PRIu32, result);
         }
       }
     }

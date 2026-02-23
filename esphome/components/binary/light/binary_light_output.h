@@ -12,16 +12,17 @@ class BinaryLightOutput : public light::LightOutput {
   void set_output(output::BinaryOutput *output) { output_ = output; }
   light::LightTraits get_traits() override {
     auto traits = light::LightTraits();
-    traits.set_supports_brightness(false);
+    traits.set_supported_color_modes({light::ColorMode::ON_OFF});
     return traits;
   }
   void write_state(light::LightState *state) override {
     bool binary;
     state->current_values_as_binary(&binary);
-    if (binary)
+    if (binary) {
       this->output_->turn_on();
-    else
+    } else {
       this->output_->turn_off();
+    }
   }
 
  protected:

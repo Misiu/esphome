@@ -1,10 +1,11 @@
 #include "ina219.h"
 #include "esphome/core/log.h"
+#include "esphome/core/hal.h"
 
 namespace esphome {
 namespace ina219 {
 
-static const char *TAG = "ina219";
+static const char *const TAG = "ina219";
 
 // | A0   | A1   | Address |
 // | GND  | GND  | 0x40    |
@@ -33,7 +34,6 @@ static const uint8_t INA219_REGISTER_CURRENT = 0x04;
 static const uint8_t INA219_REGISTER_CALIBRATION = 0x05;
 
 void INA219Component::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up INA219...");
   // Config Register
   // 0bx000000000000000 << 15 RESET Bit (1 -> trigger reset)
   if (!this->write_byte_16(INA219_REGISTER_CONFIG, 0x8000)) {
@@ -120,11 +120,18 @@ void INA219Component::setup() {
   }
 
   this->calibration_lsb_ = lsb;
-  auto calibration = uint32_t(0.04096f / (0.0001 * lsb * this->shunt_resistance_ohm_));
-  ESP_LOGV(TAG, "    Using LSB=%u calibration=%u", lsb, calibration);
+  auto calibration = uint32_t(0.04096f / (0.000001 * lsb * this->shunt_resistance_ohm_));
+  ESP_LOGV(TAG, "    Using LSB=%" PRIu32 " calibration=%" PRIu32, lsb, calibration);
   if (!this->write_byte_16(INA219_REGISTER_CALIBRATION, calibration)) {
     this->mark_failed();
     return;
+  }
+}
+
+void INA219Component::on_powerdown() {
+  // Mode = 0 -> power down
+  if (!this->write_byte_16(INA219_REGISTER_CONFIG, 0)) {
+    ESP_LOGE(TAG, "powerdown error");
   }
 }
 
@@ -133,7 +140,7 @@ void INA219Component::dump_config() {
   LOG_I2C_DEVICE(this);
 
   if (this->is_failed()) {
-    ESP_LOGE(TAG, "Communication with INA219 failed!");
+    ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
     return;
   }
   LOG_UPDATE_INTERVAL(this);
@@ -144,12 +151,10 @@ void INA219Component::dump_config() {
   LOG_SENSOR("  ", "Power", this->power_sensor_);
 }
 
-float INA219Component::get_setup_priority() const { return setup_priority::DATA; }
-
 void INA219Component::update() {
   if (this->bus_voltage_sensor_ != nullptr) {
     uint16_t raw_bus_voltage;
-    if (!this->read_byte_16(INA219_REGISTER_BUS_VOLTAGE, &raw_bus_voltage, 1)) {
+    if (!this->read_byte_16(INA219_REGISTER_BUS_VOLTAGE, &raw_bus_voltage)) {
       this->status_set_warning();
       return;
     }
@@ -160,8 +165,9 @@ void INA219Component::update() {
 
   if (this->shunt_voltage_sensor_ != nullptr) {
     uint16_t raw_shunt_voltage;
-    if (!this->read_byte_16(INA219_REGISTER_SHUNT_VOLTAGE, &raw_shunt_voltage, 1)) {
+    if (!this->read_byte_16(INA219_REGISTER_SHUNT_VOLTAGE, &raw_shunt_voltage)) {
       this->status_set_warning();
+      return;
     }
     float shunt_voltage_mv = int16_t(raw_shunt_voltage) * 0.01f;
     this->shunt_voltage_sensor_->publish_state(shunt_voltage_mv / 1000.0f);
@@ -169,7 +175,7 @@ void INA219Component::update() {
 
   if (this->current_sensor_ != nullptr) {
     uint16_t raw_current;
-    if (!this->read_byte_16(INA219_REGISTER_CURRENT, &raw_current, 1)) {
+    if (!this->read_byte_16(INA219_REGISTER_CURRENT, &raw_current)) {
       this->status_set_warning();
       return;
     }
@@ -179,7 +185,7 @@ void INA219Component::update() {
 
   if (this->power_sensor_ != nullptr) {
     uint16_t raw_power;
-    if (!this->read_byte_16(INA219_REGISTER_POWER, &raw_power, 1)) {
+    if (!this->read_byte_16(INA219_REGISTER_POWER, &raw_power)) {
       this->status_set_warning();
       return;
     }

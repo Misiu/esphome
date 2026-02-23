@@ -1,20 +1,22 @@
 import esphome.codegen as cg
-import esphome.config_validation as cv
 from esphome.components import binary_sensor
-from esphome.const import CONF_ID, CONF_DEVICE_CLASS, DEVICE_CLASS_CONNECTIVITY
+import esphome.config_validation as cv
+from esphome.const import DEVICE_CLASS_CONNECTIVITY, ENTITY_CATEGORY_DIAGNOSTIC
 
-status_ns = cg.esphome_ns.namespace('status')
-StatusBinarySensor = status_ns.class_('StatusBinarySensor', binary_sensor.BinarySensor,
-                                      cg.Component)
+DEPENDENCIES = ["network"]
 
-CONFIG_SCHEMA = binary_sensor.BINARY_SENSOR_SCHEMA.extend({
-    cv.GenerateID(): cv.declare_id(StatusBinarySensor),
+status_ns = cg.esphome_ns.namespace("status")
+StatusBinarySensor = status_ns.class_(
+    "StatusBinarySensor", binary_sensor.BinarySensor, cg.PollingComponent
+)
 
-    cv.Optional(CONF_DEVICE_CLASS, default=DEVICE_CLASS_CONNECTIVITY): binary_sensor.device_class,
-}).extend(cv.COMPONENT_SCHEMA)
+CONFIG_SCHEMA = binary_sensor.binary_sensor_schema(
+    StatusBinarySensor,
+    device_class=DEVICE_CLASS_CONNECTIVITY,
+    entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+).extend(cv.polling_component_schema("1s"))
 
 
-def to_code(config):
-    var = cg.new_Pvariable(config[CONF_ID])
-    yield cg.register_component(var, config)
-    yield binary_sensor.register_binary_sensor(var, config)
+async def to_code(config):
+    var = await binary_sensor.new_binary_sensor(config)
+    await cg.register_component(var, config)

@@ -1,64 +1,97 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/helpers.h"
+#include "esphome/core/string_ref.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/wifi/wifi_component.h"
+#ifdef USE_WIFI
+#include <array>
+#include <span>
 
-namespace esphome {
-namespace wifi_info {
+namespace esphome::wifi_info {
 
-class IPAddressWiFiInfo : public Component, public text_sensor::TextSensor {
+#ifdef USE_WIFI_IP_STATE_LISTENERS
+class IPAddressWiFiInfo final : public Component, public text_sensor::TextSensor, public wifi::WiFiIPStateListener {
  public:
-  void loop() override {
-    IPAddress ip = WiFi.localIP();
-    if (ip != this->last_ip_) {
-      this->last_ip_ = ip;
-      this->publish_state(ip.toString().c_str());
-    }
-  }
-  float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
-  std::string unique_id() override { return get_mac_address() + "-wifiinfo-ip"; }
+  void setup() override;
   void dump_config() override;
+  void add_ip_sensors(uint8_t index, text_sensor::TextSensor *s) { this->ip_sensors_[index] = s; }
+
+  // WiFiIPStateListener interface
+  void on_ip_state(const network::IPAddresses &ips, const network::IPAddress &dns1,
+                   const network::IPAddress &dns2) override;
 
  protected:
-  IPAddress last_ip_;
+  std::array<text_sensor::TextSensor *, 5> ip_sensors_;
 };
 
-class SSIDWiFiInfo : public Component, public text_sensor::TextSensor {
+class DNSAddressWifiInfo final : public Component, public text_sensor::TextSensor, public wifi::WiFiIPStateListener {
  public:
-  void loop() override {
-    String ssid = WiFi.SSID();
-    if (this->last_ssid_ != ssid.c_str()) {
-      this->last_ssid_ = std::string(ssid.c_str());
-      this->publish_state(this->last_ssid_);
-    }
-  }
-  float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
-  std::string unique_id() override { return get_mac_address() + "-wifiinfo-ssid"; }
+  void setup() override;
   void dump_config() override;
 
- protected:
-  std::string last_ssid_;
+  // WiFiIPStateListener interface
+  void on_ip_state(const network::IPAddresses &ips, const network::IPAddress &dns1,
+                   const network::IPAddress &dns2) override;
 };
+#endif  // USE_WIFI_IP_STATE_LISTENERS
 
-class BSSIDWiFiInfo : public Component, public text_sensor::TextSensor {
+#ifdef USE_WIFI_SCAN_RESULTS_LISTENERS
+class ScanResultsWiFiInfo final : public Component,
+                                  public text_sensor::TextSensor,
+                                  public wifi::WiFiScanResultsListener {
  public:
-  void loop() override {
-    uint8_t *bssid = WiFi.BSSID();
-    if (memcmp(bssid, this->last_bssid_.data(), 6) != 0) {
-      std::copy(bssid, bssid + 6, this->last_bssid_.data());
-      char buf[30];
-      sprintf(buf, "%02X:%02X:%02X:%02X:%02X:%02X", bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
-      this->publish_state(buf);
-    }
-  }
+  void setup() override;
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
-  std::string unique_id() override { return get_mac_address() + "-wifiinfo-bssid"; }
   void dump_config() override;
 
- protected:
-  wifi::bssid_t last_bssid_;
+  // WiFiScanResultsListener interface
+  void on_wifi_scan_results(const wifi::wifi_scan_vector_t<wifi::WiFiScanResult> &results) override;
+};
+#endif  // USE_WIFI_SCAN_RESULTS_LISTENERS
+
+#ifdef USE_WIFI_CONNECT_STATE_LISTENERS
+class SSIDWiFiInfo final : public Component, public text_sensor::TextSensor, public wifi::WiFiConnectStateListener {
+ public:
+  void setup() override;
+  void dump_config() override;
+
+  // WiFiConnectStateListener interface
+  void on_wifi_connect_state(StringRef ssid, std::span<const uint8_t, 6> bssid) override;
 };
 
-}  // namespace wifi_info
-}  // namespace esphome
+class BSSIDWiFiInfo final : public Component, public text_sensor::TextSensor, public wifi::WiFiConnectStateListener {
+ public:
+  void setup() override;
+  void dump_config() override;
+
+  // WiFiConnectStateListener interface
+  void on_wifi_connect_state(StringRef ssid, std::span<const uint8_t, 6> bssid) override;
+};
+#endif  // USE_WIFI_CONNECT_STATE_LISTENERS
+
+#ifdef USE_WIFI_POWER_SAVE_LISTENERS
+class PowerSaveModeWiFiInfo final : public Component,
+                                    public text_sensor::TextSensor,
+                                    public wifi::WiFiPowerSaveListener {
+ public:
+  void setup() override;
+  void dump_config() override;
+
+  // WiFiPowerSaveListener interface
+  void on_wifi_power_save(wifi::WiFiPowerSaveMode mode) override;
+};
+#endif  // USE_WIFI_POWER_SAVE_LISTENERS
+
+class MacAddressWifiInfo final : public Component, public text_sensor::TextSensor {
+ public:
+  void setup() override {
+    char mac_s[18];
+    this->publish_state(get_mac_address_pretty_into_buffer(mac_s));
+  }
+  void dump_config() override;
+};
+
+}  // namespace esphome::wifi_info
+#endif

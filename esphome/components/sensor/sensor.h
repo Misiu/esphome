@@ -1,57 +1,77 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/entity_base.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/log.h"
+#ifdef USE_SENSOR_FILTER
 #include "esphome/components/sensor/filter.h"
+#endif
 
-namespace esphome {
-namespace sensor {
+#include <initializer_list>
+#include <memory>
 
-#define LOG_SENSOR(prefix, type, obj) \
-  if (obj != nullptr) { \
-    ESP_LOGCONFIG(TAG, "%s%s '%s'", prefix, type, obj->get_name().c_str()); \
-    ESP_LOGCONFIG(TAG, "%s  Unit of Measurement: '%s'", prefix, obj->get_unit_of_measurement().c_str()); \
-    ESP_LOGCONFIG(TAG, "%s  Accuracy Decimals: %d", prefix, obj->get_accuracy_decimals()); \
-    if (!obj->get_icon().empty()) { \
-      ESP_LOGCONFIG(TAG, "%s  Icon: '%s'", prefix, obj->get_icon().c_str()); \
-    } \
-    if (!obj->unique_id().empty()) { \
-      ESP_LOGV(TAG, "%s  Unique ID: '%s'", prefix, obj->unique_id().c_str()); \
-    } \
-    if (obj->get_force_update()) { \
-      ESP_LOGV(TAG, "%s  Force Update: YES", prefix); \
-    } \
-  }
+namespace esphome::sensor {
+
+class Sensor;
+
+void log_sensor(const char *tag, const char *prefix, const char *type, Sensor *obj);
+
+#define LOG_SENSOR(prefix, type, obj) log_sensor(TAG, prefix, LOG_STR_LITERAL(type), obj)
+
+#define SUB_SENSOR(name) \
+ protected: \
+  sensor::Sensor *name##_sensor_{nullptr}; \
+\
+ public: \
+  void set_##name##_sensor(sensor::Sensor *sensor) { this->name##_sensor_ = sensor; }
+
+/**
+ * Sensor state classes
+ */
+enum StateClass : uint8_t {
+  STATE_CLASS_NONE = 0,
+  STATE_CLASS_MEASUREMENT = 1,
+  STATE_CLASS_TOTAL_INCREASING = 2,
+  STATE_CLASS_TOTAL = 3,
+  STATE_CLASS_MEASUREMENT_ANGLE = 4
+};
+constexpr uint8_t STATE_CLASS_LAST = static_cast<uint8_t>(STATE_CLASS_MEASUREMENT_ANGLE);
+
+const LogString *state_class_to_string(StateClass state_class);
 
 /** Base-class for all sensors.
  *
  * A sensor has unit of measurement and can use publish_state to send out a new value with the specified accuracy.
  */
-class Sensor : public Nameable {
+class Sensor : public EntityBase, public EntityBase_DeviceClass, public EntityBase_UnitOfMeasurement {
  public:
   explicit Sensor();
-  explicit Sensor(const std::string &name);
 
-  /** Manually set the unit of measurement of this sensor. By default the sensor's default defined by
-   * unit_of_measurement() is used.
-   *
-   * @param unit_of_measurement The unit of measurement, "" to disable.
-   */
-  void set_unit_of_measurement(const std::string &unit_of_measurement);
-
-  /** Manually set the icon of this sensor. By default the sensor's default defined by icon() is used.
-   *
-   * @param icon The icon, for example "mdi:flash". "" to disable.
-   */
-  void set_icon(const std::string &icon);
-
-  /** Manually set the accuracy in decimals for this sensor. By default, the sensor's default defined by
-   * accuracy_decimals() is used.
-   *
-   * @param accuracy_decimals The accuracy decimal that should be used.
-   */
+  /// Get the accuracy in decimals, using the manual override if set.
+  int8_t get_accuracy_decimals();
+  /// Manually set the accuracy in decimals.
   void set_accuracy_decimals(int8_t accuracy_decimals);
+  /// Check if the accuracy in decimals has been manually set.
+  bool has_accuracy_decimals() const { return this->sensor_flags_.has_accuracy_override; }
 
+  /// Get the state class, using the manual override if set.
+  StateClass get_state_class();
+  /// Manually set the state class.
+  void set_state_class(StateClass state_class);
+
+  /**
+   * Get whether force update mode is enabled.
+   *
+   * If the sensor is in force_update mode, the frontend is required to save all
+   * state changes to the database when they are published, even if the state is the
+   * same as before.
+   */
+  bool get_force_update() const { return sensor_flags_.force_update; }
+  /// Set force update mode.
+  void set_force_update(bool force_update) { sensor_flags_.force_update = force_update; }
+
+#ifdef USE_SENSOR_FILTER
   /// Add a filter to the filter chain. Will be appended to the back.
   void add_filter(Filter *filter);
 
@@ -65,31 +85,19 @@ class Sensor : public Nameable {
    *   SlidingWindowMovingAverageFilter(15, 15), // average over last 15 values
    * });
    */
-  void add_filters(const std::vector<Filter *> &filters);
+  void add_filters(std::initializer_list<Filter *> filters);
 
   /// Clear the filters and replace them by filters.
-  void set_filters(const std::vector<Filter *> &filters);
+  void set_filters(std::initializer_list<Filter *> filters);
 
   /// Clear the entire filter chain.
   void clear_filters();
+#endif
 
-  /// Getter-syntax for .value. Please use .state instead.
-  float get_value() const ESPDEPRECATED(".value is deprecated, please use .state");
   /// Getter-syntax for .state.
   float get_state() const;
-  /// Getter-syntax for .raw_value. Please use .raw_state instead.
-  float get_raw_value() const ESPDEPRECATED(".raw_value is deprecated, please use .raw_state");
   /// Getter-syntax for .raw_state
   float get_raw_state() const;
-
-  /// Get the accuracy in decimals. Uses the manual override if specified or the default value instead.
-  int8_t get_accuracy_decimals();
-
-  /// Get the unit of measurement. Uses the manual override if specified or the default value instead.
-  std::string get_unit_of_measurement();
-
-  /// Get the Home Assistant Icon. Uses the manual override if specified or the default value instead.
-  std::string get_icon();
 
   /** Publish a new state to the front-end.
    *
@@ -99,12 +107,6 @@ class Sensor : public Nameable {
    * @param state The state as a floating point number.
    */
   void publish_state(float state);
-
-  /** Push a new value to the MQTT front-end.
-   *
-   * Note: deprecated, please use publish_state.
-   */
-  void push_new_value(float state) ESPDEPRECATED("push_new_value is deprecated. Please use .publish_state instead");
 
   // ========== INTERNAL METHODS ==========
   // (In most use cases you won't need these)
@@ -122,79 +124,33 @@ class Sensor : public Nameable {
    */
   float state;
 
-  /** This member variable stores the current raw state of the sensor. Unlike .state,
-   * this will be updated immediately when publish_state is called.
+  /** This member variable stores the current raw state of the sensor, without any filters applied.
+   *
+   * Unlike .state,this will be updated immediately when publish_state is called.
    */
   float raw_state;
 
-  /// Return whether this sensor has gotten a full state (that passed through all filters) yet.
-  bool has_state() const;
-
-  /** A unique ID for this sensor, empty for no unique id. See unique ID requirements:
-   * https://developers.home-assistant.io/docs/en/entity_registry_index.html#unique-id-requirements
-   *
-   * @return The unique id as a string.
-   */
-  virtual std::string unique_id();
-
-  /// Return with which interval the sensor is polled. Return 0 for non-polling mode.
-  virtual uint32_t update_interval();
-
-  /// Calculate the expected update interval for values that pass through all filters.
-  uint32_t calculate_expected_filter_update_interval();
-
   void internal_send_state_to_frontend(float state);
 
-  bool get_force_update() const { return force_update_; }
-  /** Set this sensor's force_update mode.
-   *
-   * If the sensor is in force_update mode, the frontend is required to save all
-   * state changes to the database when they are published, even if the state is the
-   * same as before.
-   */
-  void set_force_update(bool force_update) { force_update_ = force_update; }
-
  protected:
-  /** Override this to set the Home Assistant unit of measurement for this sensor.
-   *
-   * Return "" to disable this feature.
-   *
-   * @return The icon of this sensor, for example "°C".
-   */
-  virtual std::string unit_of_measurement();  // NOLINT
+  LazyCallbackManager<void(float)> raw_callback_;  ///< Storage for raw state callbacks.
+  LazyCallbackManager<void(float)> callback_;      ///< Storage for filtered state callbacks.
 
-  /** Override this to set the Home Assistant icon for this sensor.
-   *
-   * Return "" to disable this feature.
-   *
-   * @return The icon of this sensor, for example "mdi:battery".
-   */
-  virtual std::string icon();  // NOLINT
-
-  /// Return the accuracy in decimals for this sensor.
-  virtual int8_t accuracy_decimals();  // NOLINT
-
-  uint32_t hash_base() override;
-
-  CallbackManager<void(float)> raw_callback_;  ///< Storage for raw state callbacks.
-  CallbackManager<void(float)> callback_;      ///< Storage for filtered state callbacks.
-  /// Override the unit of measurement
-  optional<std::string> unit_of_measurement_;
-  /// Override the icon advertised to Home Assistant, otherwise sensor's icon will be used.
-  optional<std::string> icon_;
-  /// Override the accuracy in decimals, otherwise the sensor's values will be used.
-  optional<int8_t> accuracy_decimals_;
+#ifdef USE_SENSOR_FILTER
   Filter *filter_list_{nullptr};  ///< Store all active filters.
-  bool has_state_{false};
-  bool force_update_{false};
+#endif
+
+  // Group small members together to avoid padding
+  int8_t accuracy_decimals_{-1};              ///< Accuracy in decimals (-1 = not set)
+  StateClass state_class_{STATE_CLASS_NONE};  ///< State class (STATE_CLASS_NONE = not set)
+
+  // Bit-packed flags for sensor-specific settings
+  struct SensorFlags {
+    uint8_t has_accuracy_override : 1;
+    uint8_t has_state_class_override : 1;
+    uint8_t force_update : 1;
+    uint8_t reserved : 5;  // Reserved for future use
+  } sensor_flags_{};
 };
 
-class PollingSensorComponent : public PollingComponent, public Sensor {
- public:
-  explicit PollingSensorComponent(const std::string &name, uint32_t update_interval);
-
-  uint32_t update_interval() override;
-};
-
-}  // namespace sensor
-}  // namespace esphome
+}  // namespace esphome::sensor

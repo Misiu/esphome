@@ -1,8 +1,9 @@
 #pragma once
 
 #include "esphome/core/component.h"
-#include "esphome/core/esphal.h"
+#include "esphome/core/hal.h"
 #include "esphome/components/output/float_output.h"
+#include <vector>
 
 namespace esphome {
 namespace my9231 {
@@ -48,6 +49,7 @@ class MY9231OutputComponent : public Component {
   void init_chips_(uint8_t command);
   void write_word_(uint16_t value, uint8_t bits);
   void send_di_pulses_(uint8_t count);
+  void send_dcki_pulses_(uint8_t count);
 
   GPIOPin *pin_di_;
   GPIOPin *pin_dcki_;

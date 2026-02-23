@@ -1,7 +1,10 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/hal.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+
+#include <vector>
 
 namespace esphome {
 namespace ttp229_bsf {
@@ -22,7 +25,6 @@ class TTP229BSFComponent : public Component {
   void register_channel(TTP229BSFChannel *channel) { this->channels_.push_back(channel); }
   void setup() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
   void loop() override {
     // check datavalid if sdo is high
     if (!this->sdo_pin_->digital_read()) {

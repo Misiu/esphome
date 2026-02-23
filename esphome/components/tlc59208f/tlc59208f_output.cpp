@@ -1,11 +1,12 @@
 #include "tlc59208f_output.h"
-#include "esphome/core/log.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/log.h"
 
 namespace esphome {
 namespace tlc59208f {
 
-static const char *TAG = "tlc59208f";
+static const char *const TAG = "tlc59208f";
 
 // * marks register defaults
 // 0*: Register auto increment disabled, 1: Register auto increment enabled
@@ -25,17 +26,7 @@ const uint8_t TLC59208F_MODE1_SUB3 = (1 << 1);
 // 0: device doesn't respond to i2c all-call 3, 1*: responds to all-call
 const uint8_t TLC59208F_MODE1_ALLCALL = (1 << 0);
 
-// 0*: Group dimming, 1: Group blinking
-const uint8_t TLC59208F_MODE2_DMBLNK = (1 << 5);
-// 0*: Output change on Stop command, 1: Output change on ACK
-const uint8_t TLC59208F_MODE2_OCH = (1 << 3);
-// 0*: WDT disabled, 1: WDT enabled
-const uint8_t TLC59208F_MODE2_WDTEN = (1 << 2);
-// WDT timeouts
-const uint8_t TLC59208F_MODE2_WDT_5MS = (0 << 0);
-const uint8_t TLC59208F_MODE2_WDT_15MS = (1 << 0);
-const uint8_t TLC59208F_MODE2_WDT_25MS = (2 << 0);
-const uint8_t TLC59208F_MODE2_WDT_35MS = (3 << 0);
+// TLC59208F MODE2 constants are now inline constexpr in tlc59208f_output.h
 
 // --- Special function ---
 // Call address to perform software reset, no devices will ACK
@@ -70,12 +61,11 @@ static const uint8_t LDR_PWM = 0x02;
 static const uint8_t LDR_GRPPWM = 0x03;
 
 void TLC59208FOutput::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up TLC59208FOutputComponent...");
-
-  ESP_LOGV(TAG, "  Resetting all devices on the bus...");
+  ESP_LOGV(TAG, "  Resetting all devices on the bus");
 
   // Reset all devices on the bus
-  if (!this->parent_->write_byte(TLC59208F_SWRST_ADDR >> 1, TLC59208F_SWRST_SEQ[0], TLC59208F_SWRST_SEQ[1])) {
+  if (this->bus_->write_readv(TLC59208F_SWRST_ADDR >> 1, TLC59208F_SWRST_SEQ, sizeof TLC59208F_SWRST_SEQ, nullptr, 0) !=
+      i2c::ERROR_OK) {
     ESP_LOGE(TAG, "RESET failed");
     this->mark_failed();
     return;
@@ -110,8 +100,10 @@ void TLC59208FOutput::setup() {
 }
 
 void TLC59208FOutput::dump_config() {
-  ESP_LOGCONFIG(TAG, "TLC59208F:");
-  ESP_LOGCONFIG(TAG, "  Mode: 0x%02X", this->mode_);
+  ESP_LOGCONFIG(TAG,
+                "TLC59208F:\n"
+                "  Mode: 0x%02X",
+                this->mode_);
 
   if (this->is_failed()) {
     ESP_LOGE(TAG, "Setting up TLC59208F failed!");
@@ -137,11 +129,11 @@ void TLC59208FOutput::loop() {
   this->update_ = false;
 }
 
-TLC59208FChannel *TLC59208FOutput::create_channel(uint8_t channel) {
-  this->min_channel_ = std::min(this->min_channel_, channel);
-  this->max_channel_ = std::max(this->max_channel_, channel);
-  auto *c = new TLC59208FChannel(this, channel);
-  return c;
+void TLC59208FOutput::register_channel(TLC59208FChannel *channel) {
+  auto c = channel->channel_;
+  this->min_channel_ = std::min(this->min_channel_, c);
+  this->max_channel_ = std::max(this->max_channel_, c);
+  channel->set_parent(this);
 }
 
 void TLC59208FChannel::write_state(float state) {

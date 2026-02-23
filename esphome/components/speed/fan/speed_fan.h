@@ -3,33 +3,32 @@
 #include "esphome/core/component.h"
 #include "esphome/components/output/binary_output.h"
 #include "esphome/components/output/float_output.h"
-#include "esphome/components/fan/fan_state.h"
+#include "esphome/components/fan/fan.h"
 
 namespace esphome {
 namespace speed {
 
-class SpeedFan : public Component {
+class SpeedFan : public Component, public fan::Fan {
  public:
-  SpeedFan(fan::FanState *fan, output::FloatOutput *output) : fan_(fan), output_(output) {}
+  SpeedFan(int speed_count) : speed_count_(speed_count) {}
   void setup() override;
-  void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override;
+  void set_output(output::FloatOutput *output) { this->output_ = output; }
   void set_oscillating(output::BinaryOutput *oscillating) { this->oscillating_ = oscillating; }
-  void set_speeds(float low, float medium, float high) {
-    this->low_speed_ = low;
-    this->medium_speed_ = medium;
-    this->high_speed_ = high;
-  }
+  void set_direction(output::BinaryOutput *direction) { this->direction_ = direction; }
+  void set_preset_modes(std::initializer_list<const char *> presets) { this->preset_modes_ = presets; }
+  fan::FanTraits get_traits() override { return this->traits_; }
 
  protected:
-  fan::FanState *fan_;
+  void control(const fan::FanCall &call) override;
+  void write_state_();
+
   output::FloatOutput *output_;
   output::BinaryOutput *oscillating_{nullptr};
-  float low_speed_{};
-  float medium_speed_{};
-  float high_speed_{};
-  bool next_update_{true};
+  output::BinaryOutput *direction_{nullptr};
+  int speed_count_{};
+  fan::FanTraits traits_;
+  std::vector<const char *> preset_modes_{};
 };
 
 }  // namespace speed

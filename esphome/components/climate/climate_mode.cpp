@@ -1,84 +1,44 @@
 #include "climate_mode.h"
+#include "esphome/core/progmem.h"
 
-namespace esphome {
-namespace climate {
+namespace esphome::climate {
 
-const char *climate_mode_to_string(ClimateMode mode) {
-  switch (mode) {
-    case CLIMATE_MODE_OFF:
-      return "OFF";
-    case CLIMATE_MODE_AUTO:
-      return "AUTO";
-    case CLIMATE_MODE_COOL:
-      return "COOL";
-    case CLIMATE_MODE_HEAT:
-      return "HEAT";
-    case CLIMATE_MODE_FAN_ONLY:
-      return "FAN_ONLY";
-    case CLIMATE_MODE_DRY:
-      return "DRY";
-    default:
-      return "UNKNOWN";
-  }
-}
-const char *climate_action_to_string(ClimateAction action) {
-  switch (action) {
-    case CLIMATE_ACTION_OFF:
-      return "OFF";
-    case CLIMATE_ACTION_COOLING:
-      return "COOLING";
-    case CLIMATE_ACTION_HEATING:
-      return "HEATING";
-    case CLIMATE_ACTION_IDLE:
-      return "IDLE";
-    case CLIMATE_ACTION_DRYING:
-      return "DRYING";
-    case CLIMATE_ACTION_FAN:
-      return "FAN";
-    default:
-      return "UNKNOWN";
-  }
+// Climate mode strings indexed by ClimateMode enum (0-6): OFF, HEAT_COOL, COOL, HEAT, FAN_ONLY, DRY, AUTO
+PROGMEM_STRING_TABLE(ClimateModeStrings, "OFF", "HEAT_COOL", "COOL", "HEAT", "FAN_ONLY", "DRY", "AUTO", "UNKNOWN");
+
+const LogString *climate_mode_to_string(ClimateMode mode) {
+  return ClimateModeStrings::get_log_str(static_cast<uint8_t>(mode), ClimateModeStrings::LAST_INDEX);
 }
 
-const char *climate_fan_mode_to_string(ClimateFanMode fan_mode) {
-  switch (fan_mode) {
-    case climate::CLIMATE_FAN_ON:
-      return "ON";
-    case climate::CLIMATE_FAN_OFF:
-      return "OFF";
-    case climate::CLIMATE_FAN_AUTO:
-      return "AUTO";
-    case climate::CLIMATE_FAN_LOW:
-      return "LOW";
-    case climate::CLIMATE_FAN_MEDIUM:
-      return "MEDIUM";
-    case climate::CLIMATE_FAN_HIGH:
-      return "HIGH";
-    case climate::CLIMATE_FAN_MIDDLE:
-      return "MIDDLE";
-    case climate::CLIMATE_FAN_FOCUS:
-      return "FOCUS";
-    case climate::CLIMATE_FAN_DIFFUSE:
-      return "DIFFUSE";
-    default:
-      return "UNKNOWN";
-  }
+// Climate action strings indexed by ClimateAction enum (0,2-6): OFF, (gap), COOLING, HEATING, IDLE, DRYING, FAN
+PROGMEM_STRING_TABLE(ClimateActionStrings, "OFF", "UNKNOWN", "COOLING", "HEATING", "IDLE", "DRYING", "FAN", "UNKNOWN");
+
+const LogString *climate_action_to_string(ClimateAction action) {
+  return ClimateActionStrings::get_log_str(static_cast<uint8_t>(action), ClimateActionStrings::LAST_INDEX);
 }
 
-const char *climate_swing_mode_to_string(ClimateSwingMode swing_mode) {
-  switch (swing_mode) {
-    case climate::CLIMATE_SWING_OFF:
-      return "OFF";
-    case climate::CLIMATE_SWING_BOTH:
-      return "BOTH";
-    case climate::CLIMATE_SWING_VERTICAL:
-      return "VERTICAL";
-    case climate::CLIMATE_SWING_HORIZONTAL:
-      return "HORIZONTAL";
-    default:
-      return "UNKNOWN";
-  }
+// Climate fan mode strings indexed by ClimateFanMode enum (0-9): ON, OFF, AUTO, LOW, MEDIUM, HIGH, MIDDLE, FOCUS,
+// DIFFUSE, QUIET
+PROGMEM_STRING_TABLE(ClimateFanModeStrings, "ON", "OFF", "AUTO", "LOW", "MEDIUM", "HIGH", "MIDDLE", "FOCUS", "DIFFUSE",
+                     "QUIET", "UNKNOWN");
+
+const LogString *climate_fan_mode_to_string(ClimateFanMode fan_mode) {
+  return ClimateFanModeStrings::get_log_str(static_cast<uint8_t>(fan_mode), ClimateFanModeStrings::LAST_INDEX);
 }
 
-}  // namespace climate
-}  // namespace esphome
+// Climate swing mode strings indexed by ClimateSwingMode enum (0-3): OFF, BOTH, VERTICAL, HORIZONTAL
+PROGMEM_STRING_TABLE(ClimateSwingModeStrings, "OFF", "BOTH", "VERTICAL", "HORIZONTAL", "UNKNOWN");
+
+const LogString *climate_swing_mode_to_string(ClimateSwingMode swing_mode) {
+  return ClimateSwingModeStrings::get_log_str(static_cast<uint8_t>(swing_mode), ClimateSwingModeStrings::LAST_INDEX);
+}
+
+// Climate preset strings indexed by ClimatePreset enum (0-7): NONE, HOME, AWAY, BOOST, COMFORT, ECO, SLEEP, ACTIVITY
+PROGMEM_STRING_TABLE(ClimatePresetStrings, "NONE", "HOME", "AWAY", "BOOST", "COMFORT", "ECO", "SLEEP", "ACTIVITY",
+                     "UNKNOWN");
+
+const LogString *climate_preset_to_string(ClimatePreset preset) {
+  return ClimatePresetStrings::get_log_str(static_cast<uint8_t>(preset), ClimatePresetStrings::LAST_INDEX);
+}
+
+}  // namespace esphome::climate

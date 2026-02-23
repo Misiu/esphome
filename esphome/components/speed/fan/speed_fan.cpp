@@ -4,50 +4,45 @@
 namespace esphome {
 namespace speed {
 
-static const char *TAG = "speed.fan";
+static const char *const TAG = "speed.fan";
 
-void SpeedFan::dump_config() {
-  ESP_LOGCONFIG(TAG, "Fan '%s':", this->fan_->get_name().c_str());
-  if (this->fan_->get_traits().supports_oscillation()) {
-    ESP_LOGCONFIG(TAG, "  Oscillation: YES");
-  }
-}
 void SpeedFan::setup() {
-  auto traits = fan::FanTraits(this->oscillating_ != nullptr, true);
-  this->fan_->set_traits(traits);
-  this->fan_->add_on_state_callback([this]() { this->next_update_ = true; });
-}
-void SpeedFan::loop() {
-  if (!this->next_update_) {
-    return;
-  }
-  this->next_update_ = false;
+  // Construct traits before restore so preset modes can be looked up by index
+  this->traits_ = fan::FanTraits(this->oscillating_ != nullptr, true, this->direction_ != nullptr, this->speed_count_);
+  this->traits_.set_supported_preset_modes(this->preset_modes_);
 
-  {
-    float speed = 0.0f;
-    if (this->fan_->state) {
-      if (this->fan_->speed == fan::FAN_SPEED_LOW)
-        speed = this->low_speed_;
-      else if (this->fan_->speed == fan::FAN_SPEED_MEDIUM)
-        speed = this->medium_speed_;
-      else if (this->fan_->speed == fan::FAN_SPEED_HIGH)
-        speed = this->high_speed_;
-    }
-    ESP_LOGD(TAG, "Setting speed: %.2f", speed);
-    this->output_->set_level(speed);
-  }
-
-  if (this->oscillating_ != nullptr) {
-    bool enable = this->fan_->oscillating;
-    if (enable) {
-      this->oscillating_->turn_on();
-    } else {
-      this->oscillating_->turn_off();
-    }
-    ESP_LOGD(TAG, "Setting oscillation: %s", ONOFF(enable));
+  auto restore = this->restore_state_();
+  if (restore.has_value()) {
+    restore->apply(*this);
+    this->write_state_();
   }
 }
-float SpeedFan::get_setup_priority() const { return setup_priority::DATA; }
+
+void SpeedFan::dump_config() { LOG_FAN("", "Speed Fan", this); }
+
+void SpeedFan::control(const fan::FanCall &call) {
+  if (call.get_state().has_value())
+    this->state = *call.get_state();
+  if (call.get_speed().has_value())
+    this->speed = *call.get_speed();
+  if (call.get_oscillating().has_value())
+    this->oscillating = *call.get_oscillating();
+  if (call.get_direction().has_value())
+    this->direction = *call.get_direction();
+  this->apply_preset_mode_(call);
+
+  this->write_state_();
+  this->publish_state();
+}
+
+void SpeedFan::write_state_() {
+  float speed = this->state ? static_cast<float>(this->speed) / static_cast<float>(this->speed_count_) : 0.0f;
+  this->output_->set_level(speed);
+  if (this->oscillating_ != nullptr)
+    this->oscillating_->set_state(this->oscillating);
+  if (this->direction_ != nullptr)
+    this->direction_->set_state(this->direction == fan::FanDirection::REVERSE);
+}
 
 }  // namespace speed
 }  // namespace esphome

@@ -1,43 +1,49 @@
 #pragma once
 
 #include <cstdint>
+#include "esphome/core/log.h"
 
-namespace esphome {
-namespace climate {
+namespace esphome::climate {
 
 /// Enum for all modes a climate device can be in.
+/// NOTE: If adding values, update ClimateModeMask in climate_traits.h to use the new last value
 enum ClimateMode : uint8_t {
-  /// The climate device is off (not in auto, heat or cool mode)
+  /// The climate device is off
   CLIMATE_MODE_OFF = 0,
-  /// The climate device is set to automatically change the heating/cooling cycle
-  CLIMATE_MODE_AUTO = 1,
-  /// The climate device is manually set to cool mode (not in auto mode!)
+  /// The climate device is set to heat/cool to reach the target temperature.
+  CLIMATE_MODE_HEAT_COOL = 1,
+  /// The climate device is set to cool to reach the target temperature
   CLIMATE_MODE_COOL = 2,
-  /// The climate device is manually set to heat mode (not in auto mode!)
+  /// The climate device is set to heat to reach the target temperature
   CLIMATE_MODE_HEAT = 3,
-  /// The climate device is manually set to fan only mode
+  /// The climate device only has the fan enabled, no heating or cooling is taking place
   CLIMATE_MODE_FAN_ONLY = 4,
-  /// The climate device is manually set to dry mode
+  /// The climate device is set to dry/humidity mode
   CLIMATE_MODE_DRY = 5,
+  /** The climate device is adjusting the temperature dynamically.
+   * For example, the target temperature can be adjusted based on a schedule, or learned behavior.
+   * The target temperature can't be adjusted when in this mode.
+   */
+  CLIMATE_MODE_AUTO = 6  // Update ClimateModeMask in climate_traits.h if adding values after this
 };
 
 /// Enum for the current action of the climate device. Values match those of ClimateMode.
 enum ClimateAction : uint8_t {
   /// The climate device is off (inactive or no power)
   CLIMATE_ACTION_OFF = 0,
-  /// The climate device is actively cooling (usually in cool or auto mode)
+  /// The climate device is actively cooling
   CLIMATE_ACTION_COOLING = 2,
-  /// The climate device is actively heating (usually in heat or auto mode)
+  /// The climate device is actively heating
   CLIMATE_ACTION_HEATING = 3,
   /// The climate device is idle (monitoring climate but no action needed)
   CLIMATE_ACTION_IDLE = 4,
-  /// The climate device is drying (either mode DRY or AUTO)
+  /// The climate device is drying
   CLIMATE_ACTION_DRYING = 5,
-  /// The climate device is in fan only mode (either mode FAN_ONLY or AUTO)
+  /// The climate device is in fan only mode
   CLIMATE_ACTION_FAN = 6,
 };
 
-/// Enum for all modes a climate fan can be in
+/// NOTE: If adding values, update ClimateFanModeMask in climate_traits.h to use the new last value
 enum ClimateFanMode : uint8_t {
   /// The fan mode is set to On
   CLIMATE_FAN_ON = 0,
@@ -57,31 +63,72 @@ enum ClimateFanMode : uint8_t {
   CLIMATE_FAN_FOCUS = 7,
   /// The fan mode is set to Diffuse
   CLIMATE_FAN_DIFFUSE = 8,
+  /// The fan mode is set to Quiet
+  CLIMATE_FAN_QUIET = 9,  // Update ClimateFanModeMask in climate_traits.h if adding values after this
 };
 
 /// Enum for all modes a climate swing can be in
+/// NOTE: If adding values, update ClimateSwingModeMask in climate_traits.h to use the new last value
 enum ClimateSwingMode : uint8_t {
-  /// The sing mode is set to Off
+  /// The swing mode is set to Off
   CLIMATE_SWING_OFF = 0,
   /// The fan mode is set to Both
   CLIMATE_SWING_BOTH = 1,
   /// The fan mode is set to Vertical
   CLIMATE_SWING_VERTICAL = 2,
   /// The fan mode is set to Horizontal
-  CLIMATE_SWING_HORIZONTAL = 3,
+  CLIMATE_SWING_HORIZONTAL = 3,  // Update ClimateSwingModeMask in climate_traits.h if adding values after this
+};
+
+/// Enum for all preset modes
+/// NOTE: If adding values, update ClimatePresetMask in climate_traits.h to use the new last value
+enum ClimatePreset : uint8_t {
+  /// No preset is active
+  CLIMATE_PRESET_NONE = 0,
+  /// Device is in home preset
+  CLIMATE_PRESET_HOME = 1,
+  /// Device is in away preset
+  CLIMATE_PRESET_AWAY = 2,
+  /// Device is in boost preset
+  CLIMATE_PRESET_BOOST = 3,
+  /// Device is in comfort preset
+  CLIMATE_PRESET_COMFORT = 4,
+  /// Device is running an energy-saving preset
+  CLIMATE_PRESET_ECO = 5,
+  /// Device is prepared for sleep
+  CLIMATE_PRESET_SLEEP = 6,
+  /// Device is reacting to activity (e.g., movement sensors)
+  CLIMATE_PRESET_ACTIVITY = 7,  // Update ClimatePresetMask in climate_traits.h if adding values after this
+};
+
+enum ClimateFeature : uint32_t {
+  // Reporting current temperature is supported
+  CLIMATE_SUPPORTS_CURRENT_TEMPERATURE = 1 << 0,
+  // Setting two target temperatures is supported (used in conjunction with CLIMATE_MODE_HEAT_COOL)
+  CLIMATE_SUPPORTS_TWO_POINT_TARGET_TEMPERATURE = 1 << 1,
+  // Single-point mode is NOT supported (UI always displays two handles, setting 'target_temperature' is not supported)
+  CLIMATE_REQUIRES_TWO_POINT_TARGET_TEMPERATURE = 1 << 2,
+  // Reporting current humidity is supported
+  CLIMATE_SUPPORTS_CURRENT_HUMIDITY = 1 << 3,
+  // Setting a target humidity is supported
+  CLIMATE_SUPPORTS_TARGET_HUMIDITY = 1 << 4,
+  // Reporting current climate action is supported
+  CLIMATE_SUPPORTS_ACTION = 1 << 5,
 };
 
 /// Convert the given ClimateMode to a human-readable string.
-const char *climate_mode_to_string(ClimateMode mode);
+const LogString *climate_mode_to_string(ClimateMode mode);
 
 /// Convert the given ClimateAction to a human-readable string.
-const char *climate_action_to_string(ClimateAction action);
+const LogString *climate_action_to_string(ClimateAction action);
 
 /// Convert the given ClimateFanMode to a human-readable string.
-const char *climate_fan_mode_to_string(ClimateFanMode mode);
+const LogString *climate_fan_mode_to_string(ClimateFanMode mode);
 
 /// Convert the given ClimateSwingMode to a human-readable string.
-const char *climate_swing_mode_to_string(ClimateSwingMode mode);
+const LogString *climate_swing_mode_to_string(ClimateSwingMode mode);
 
-}  // namespace climate
-}  // namespace esphome
+/// Convert the given PresetMode to a human-readable string.
+const LogString *climate_preset_to_string(ClimatePreset preset);
+
+}  // namespace esphome::climate

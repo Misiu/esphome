@@ -1,30 +1,41 @@
 import esphome.codegen as cg
-import esphome.config_validation as cv
 from esphome.components import sensor
-from esphome.const import CONF_DISTANCE, CONF_LIGHTNING_ENERGY, \
-    UNIT_KILOMETER, UNIT_EMPTY, ICON_SIGNAL_DISTANCE_VARIANT, ICON_FLASH
+import esphome.config_validation as cv
+from esphome.const import (
+    CONF_DISTANCE,
+    CONF_LIGHTNING_ENERGY,
+    ICON_FLASH,
+    ICON_SIGNAL_DISTANCE_VARIANT,
+    UNIT_KILOMETER,
+)
+
 from . import AS3935, CONF_AS3935_ID
 
-DEPENDENCIES = ['as3935']
+DEPENDENCIES = ["as3935"]
 
-CONFIG_SCHEMA = cv.Schema({
-    cv.GenerateID(CONF_AS3935_ID): cv.use_id(AS3935),
-    cv.Optional(CONF_DISTANCE):
-        sensor.sensor_schema(UNIT_KILOMETER, ICON_SIGNAL_DISTANCE_VARIANT, 1),
-    cv.Optional(CONF_LIGHTNING_ENERGY):
-        sensor.sensor_schema(UNIT_EMPTY, ICON_FLASH, 1),
-}).extend(cv.COMPONENT_SCHEMA)
+CONFIG_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(CONF_AS3935_ID): cv.use_id(AS3935),
+        cv.Optional(CONF_DISTANCE): sensor.sensor_schema(
+            unit_of_measurement=UNIT_KILOMETER,
+            icon=ICON_SIGNAL_DISTANCE_VARIANT,
+            accuracy_decimals=1,
+        ),
+        cv.Optional(CONF_LIGHTNING_ENERGY): sensor.sensor_schema(
+            icon=ICON_FLASH,
+            accuracy_decimals=1,
+        ),
+    }
+).extend(cv.COMPONENT_SCHEMA)
 
 
-def to_code(config):
-    hub = yield cg.get_variable(config[CONF_AS3935_ID])
+async def to_code(config):
+    hub = await cg.get_variable(config[CONF_AS3935_ID])
 
-    if CONF_DISTANCE in config:
-        conf = config[CONF_DISTANCE]
-        distance_sensor = yield sensor.new_sensor(conf)
-        cg.add(hub.set_distance_sensor(distance_sensor))
+    if distance_config := config.get(CONF_DISTANCE):
+        sens = await sensor.new_sensor(distance_config)
+        cg.add(hub.set_distance_sensor(sens))
 
-    if CONF_LIGHTNING_ENERGY in config:
-        conf = config[CONF_LIGHTNING_ENERGY]
-        lightning_energy_sensor = yield sensor.new_sensor(conf)
-        cg.add(hub.set_distance_sensor(lightning_energy_sensor))
+    if lightning_energy_config := config.get(CONF_LIGHTNING_ENERGY):
+        sens = await sensor.new_sensor(lightning_energy_config)
+        cg.add(hub.set_energy_sensor(sens))

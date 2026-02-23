@@ -75,6 +75,9 @@ target/
 # pyenv
 .python-version
 
+# asdf
+.tool-versions
+
 # celery beat schedule file
 celerybeat-schedule
 
@@ -103,8 +106,13 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+# PlatformIO
+.pio/
+
+# ESPHome
 config/
 examples/
 Dockerfile
 .git/
-tests/build/
+tests/
+.*

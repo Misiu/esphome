@@ -1,11 +1,12 @@
 #include "lcd_display.h"
-#include "esphome/core/log.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/log.h"
 
 namespace esphome {
 namespace lcd_base {
 
-static const char *TAG = "lcd";
+static const char *const TAG = "lcd";
 
 // First set bit determines command, bits after that are the data.
 static const uint8_t LCD_DISPLAY_COMMAND_CLEAR_DISPLAY = 0x01;
@@ -29,7 +30,7 @@ static const uint8_t LCD_DISPLAY_FUNCTION_2_LINE = 0x08;
 static const uint8_t LCD_DISPLAY_FUNCTION_5X10_DOTS = 0x04;
 
 void LCDDisplay::setup() {
-  this->buffer_ = new uint8_t[this->rows_ * this->columns_];
+  this->buffer_ = new uint8_t[this->rows_ * this->columns_];  // NOLINT
   for (uint8_t i = 0; i < this->rows_ * this->columns_; i++)
     this->buffer_[i] = ' ';
 
@@ -62,6 +63,13 @@ void LCDDisplay::setup() {
     this->command_(LCD_DISPLAY_COMMAND_FUNCTION_SET | display_function);
     delayMicroseconds(150);
     this->command_(LCD_DISPLAY_COMMAND_FUNCTION_SET | display_function);
+  }
+
+  // store user defined characters
+  for (auto &user_defined_char : this->user_defined_chars_) {
+    this->command_(LCD_DISPLAY_COMMAND_SET_CGRAM_ADDR | (user_defined_char.first << 3));
+    for (auto data : user_defined_char.second)
+      this->send(data, true);
   }
 
   this->command_(LCD_DISPLAY_COMMAND_FUNCTION_SET | display_function);
@@ -104,9 +112,7 @@ void HOT LCDDisplay::display() {
   }
 }
 void LCDDisplay::update() {
-  for (uint8_t i = 0; i < this->rows_ * this->columns_; i++)
-    this->buffer_[i] = ' ';
-
+  this->clear();
   this->call_writer();
   this->display();
 }
@@ -149,19 +155,23 @@ void LCDDisplay::printf(const char *format, ...) {
     this->print(0, 0, buffer);
 }
 void LCDDisplay::clear() {
-  // clear display, also sets DDRAM address to 0 (home)
-  this->command_(LCD_DISPLAY_COMMAND_CLEAR_DISPLAY);
-  delay(2);
+  for (uint8_t i = 0; i < this->rows_ * this->columns_; i++)
+    this->buffer_[i] = ' ';
 }
-#ifdef USE_TIME
-void LCDDisplay::strftime(uint8_t column, uint8_t row, const char *format, time::ESPTime time) {
+void LCDDisplay::strftime(uint8_t column, uint8_t row, const char *format, ESPTime time) {
   char buffer[64];
   size_t ret = time.strftime(buffer, sizeof(buffer), format);
   if (ret > 0)
     this->print(column, row, buffer);
 }
-void LCDDisplay::strftime(const char *format, time::ESPTime time) { this->strftime(0, 0, format, time); }
-#endif
+void LCDDisplay::strftime(const char *format, ESPTime time) { this->strftime(0, 0, format, time); }
+void LCDDisplay::loadchar(uint8_t location, uint8_t charmap[]) {
+  location &= 0x7;  // we only have 8 locations 0-7
+  this->command_(LCD_DISPLAY_COMMAND_SET_CGRAM_ADDR | (location << 3));
+  for (int i = 0; i < 8; i++) {
+    this->send(charmap[i], true);
+  }
+}
 
 }  // namespace lcd_base
 }  // namespace esphome

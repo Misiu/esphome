@@ -1,10 +1,15 @@
 #include "sgp30.h"
+#include "esphome/core/application.h"
+#include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
+
+#include <cinttypes>
 
 namespace esphome {
 namespace sgp30 {
 
-static const char *TAG = "sgp30";
+static const char *const TAG = "sgp30";
 
 static const uint16_t SGP30_CMD_GET_SERIAL_ID = 0x3682;
 static const uint16_t SGP30_CMD_GET_FEATURESET = 0x202f;
@@ -16,42 +21,36 @@ static const uint16_t SGP30_CMD_SET_IAQ_BASELINE = 0x201E;
 
 // Sensor baseline should first be relied on after 1H of operation,
 // if the sensor starts with a baseline value provided
-const long IAQ_BASELINE_WARM_UP_SECONDS_WITH_BASELINE_PROVIDED = 3600;
+const uint32_t IAQ_BASELINE_WARM_UP_SECONDS_WITH_BASELINE_PROVIDED = 3600;
 
 // Sensor baseline could first be relied on after 12H of operation,
 // if the sensor starts without any prior baseline value provided
-const long IAQ_BASELINE_WARM_UP_SECONDS_WITHOUT_BASELINE = 43200;
+const uint32_t IAQ_BASELINE_WARM_UP_SECONDS_WITHOUT_BASELINE = 43200;
+
+// Shortest time interval of 1H for storing baseline values.
+// Prevents wear of the flash because of too many write operations
+const uint32_t SHORTEST_BASELINE_STORE_INTERVAL = 3600;
+
+// Store anyway if the baseline difference exceeds the max storage diff value
+const uint32_t MAXIMUM_STORAGE_DIFF = 50;
 
 void SGP30Component::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up SGP30...");
-
   // Serial Number identification
-  if (!this->write_command_(SGP30_CMD_GET_SERIAL_ID)) {
-    this->error_code_ = COMMUNICATION_FAILED;
-    this->mark_failed();
-    return;
-  }
   uint16_t raw_serial_number[3];
-
-  if (!this->read_data_(raw_serial_number, 3)) {
+  if (!this->get_register(SGP30_CMD_GET_SERIAL_ID, raw_serial_number, 3)) {
     this->mark_failed();
     return;
   }
-  this->serial_number_ = (uint64_t(raw_serial_number[0]) << 24) | (uint64_t(raw_serial_number[1]) << 16) |
-                         (uint64_t(raw_serial_number[2]));
-  ESP_LOGD(TAG, "Serial Number: %llu", this->serial_number_);
+  this->serial_number_ = encode_uint24(raw_serial_number[0], raw_serial_number[1], raw_serial_number[2]);
+  ESP_LOGD(TAG, "Serial number: %" PRIu64, this->serial_number_);
 
   // Featureset identification for future use
-  if (!this->write_command_(SGP30_CMD_GET_FEATURESET)) {
+  uint16_t raw_featureset;
+  if (!this->get_register(SGP30_CMD_GET_FEATURESET, raw_featureset)) {
     this->mark_failed();
     return;
   }
-  uint16_t raw_featureset[1];
-  if (!this->read_data_(raw_featureset, 1)) {
-    this->mark_failed();
-    return;
-  }
-  this->featureset_ = raw_featureset[0];
+  this->featureset_ = raw_featureset;
   if (uint16_t(this->featureset_ >> 12) != 0x0) {
     if (uint16_t(this->featureset_ >> 12) == 0x1) {
       // ID matching a different sensor: SGPC3
@@ -63,15 +62,31 @@ void SGP30Component::setup() {
     this->mark_failed();
     return;
   }
-  ESP_LOGD(TAG, "Product version: 0x%0X", uint16_t(this->featureset_ & 0x1FF));
+  ESP_LOGV(TAG, "Product version: 0x%0X", uint16_t(this->featureset_ & 0x1FF));
 
   // Sensor initialization
-  if (!this->write_command_(SGP30_CMD_IAQ_INIT)) {
-    ESP_LOGE(TAG, "Sensor sgp30_iaq_init failed.");
+  if (!this->write_command(SGP30_CMD_IAQ_INIT)) {
+    ESP_LOGE(TAG, "sgp30_iaq_init failed");
     this->error_code_ = MEASUREMENT_INIT_FAILED;
     this->mark_failed();
     return;
   }
+
+  // Hash with config hash, version, and serial number
+  // This ensures the baseline storage is cleared after OTA
+  // Serial numbers are unique to each sensor, so multiple sensors can be used without conflict
+  uint32_t hash = fnv1a_hash_extend(App.get_config_version_hash(), this->serial_number_);
+  this->pref_ = global_preferences->make_preference<SGP30Baselines>(hash, true);
+
+  if (this->store_baseline_ && this->pref_.load(&this->baselines_storage_)) {
+    ESP_LOGI(TAG, "Loaded eCO2 baseline: 0x%04X, TVOC baseline: 0x%04X", this->baselines_storage_.eco2,
+             baselines_storage_.tvoc);
+    this->eco2_baseline_ = this->baselines_storage_.eco2;
+    this->tvoc_baseline_ = this->baselines_storage_.tvoc;
+  }
+
+  // Initialize storage timestamp
+  this->seconds_since_last_store_ = 0;
 
   // Sensor baseline reliability timer
   if (this->eco2_baseline_ > 0 && this->tvoc_baseline_ > 0) {
@@ -94,14 +109,14 @@ bool SGP30Component::is_sensor_baseline_reliable_() {
 
 void SGP30Component::read_iaq_baseline_() {
   if (this->is_sensor_baseline_reliable_()) {
-    if (!this->write_command_(SGP30_CMD_GET_IAQ_BASELINE)) {
+    if (!this->write_command(SGP30_CMD_GET_IAQ_BASELINE)) {
       ESP_LOGD(TAG, "Error getting baseline");
       this->status_set_warning();
       return;
     }
     this->set_timeout(50, [this]() {
       uint16_t raw_data[2];
-      if (!this->read_data_(raw_data, 2)) {
+      if (!this->read_data(raw_data, 2)) {
         this->status_set_warning();
         return;
       }
@@ -109,7 +124,32 @@ void SGP30Component::read_iaq_baseline_() {
       uint16_t eco2baseline = (raw_data[0]);
       uint16_t tvocbaseline = (raw_data[1]);
 
-      ESP_LOGI(TAG, "Current eCO2 baseline: 0x%04X, TVOC baseline: 0x%04X", eco2baseline, tvocbaseline);
+      ESP_LOGI(TAG, "Baselines: eCO2: 0x%04X, TVOC: 0x%04X", eco2baseline, tvocbaseline);
+      if (eco2baseline != this->eco2_baseline_ || tvocbaseline != this->tvoc_baseline_) {
+        this->eco2_baseline_ = eco2baseline;
+        this->tvoc_baseline_ = tvocbaseline;
+        if (this->eco2_sensor_baseline_ != nullptr)
+          this->eco2_sensor_baseline_->publish_state(this->eco2_baseline_);
+        if (this->tvoc_sensor_baseline_ != nullptr)
+          this->tvoc_sensor_baseline_->publish_state(this->tvoc_baseline_);
+
+        // Store baselines after defined interval or if the difference between current and stored baseline becomes too
+        // much
+        if (this->store_baseline_ &&
+            (this->seconds_since_last_store_ > SHORTEST_BASELINE_STORE_INTERVAL ||
+             (uint32_t) abs(this->baselines_storage_.eco2 - this->eco2_baseline_) > MAXIMUM_STORAGE_DIFF ||
+             (uint32_t) abs(this->baselines_storage_.tvoc - this->tvoc_baseline_) > MAXIMUM_STORAGE_DIFF)) {
+          this->seconds_since_last_store_ = 0;
+          this->baselines_storage_.eco2 = this->eco2_baseline_;
+          this->baselines_storage_.tvoc = this->tvoc_baseline_;
+          if (this->pref_.save(&this->baselines_storage_)) {
+            ESP_LOGI(TAG, "Store baselines: eCO2: 0x%04X, TVOC: 0x%04X", this->baselines_storage_.eco2,
+                     this->baselines_storage_.tvoc);
+          } else {
+            ESP_LOGW(TAG, "Could not store eCO2 and TVOC baselines");
+          }
+        }
+      }
       this->status_clear_warning();
     });
   } else {
@@ -124,8 +164,8 @@ void SGP30Component::send_env_data_() {
   float humidity = NAN;
   if (this->humidity_sensor_ != nullptr)
     humidity = this->humidity_sensor_->state;
-  if (isnan(humidity) || humidity < 0.0f || humidity > 100.0f) {
-    ESP_LOGW(TAG, "Compensation not possible yet: bad humidity data.");
+  if (std::isnan(humidity) || humidity < 0.0f || humidity > 100.0f) {
+    ESP_LOGW(TAG, "Compensation not possible yet: bad humidity data");
     return;
   } else {
     ESP_LOGD(TAG, "External compensation data received: Humidity %0.2f%%", humidity);
@@ -134,44 +174,53 @@ void SGP30Component::send_env_data_() {
   if (this->temperature_sensor_ != nullptr) {
     temperature = float(this->temperature_sensor_->state);
   }
-  if (isnan(temperature) || temperature < -40.0f || temperature > 85.0f) {
-    ESP_LOGW(TAG, "Compensation not possible yet: bad temperature value data.");
+  if (std::isnan(temperature) || temperature < -40.0f || temperature > 85.0f) {
+    ESP_LOGW(TAG, "Compensation not possible yet: bad temperature value");
     return;
   } else {
     ESP_LOGD(TAG, "External compensation data received: Temperature %0.2f°C", temperature);
   }
 
-  float absolute_humidity =
-      216.7f * (((humidity / 100) * 6.112f * std::exp((17.62f * temperature) / (243.12f + temperature))) /
-                (273.15f + temperature));
-  uint8_t humidity_full = uint8_t(std::floor(absolute_humidity));
-  uint8_t humidity_dec = uint8_t(std::floor((absolute_humidity - std::floor(absolute_humidity)) * 256));
-  ESP_LOGD(TAG, "Calculated Absolute humidity: %0.3f g/m³ (0x%04X)", absolute_humidity,
-           uint16_t(uint16_t(humidity_full) << 8 | uint16_t(humidity_dec)));
-  uint8_t crc = sht_crc_(humidity_full, humidity_dec);
-  uint8_t data[4];
-  data[0] = SGP30_CMD_SET_ABSOLUTE_HUMIDITY & 0xFF;
-  data[1] = humidity_full;
-  data[2] = humidity_dec;
-  data[3] = crc;
+  float absolute_humidity;
+  if (temperature < 0) {
+    absolute_humidity =
+        216.67f *
+        ((humidity * 0.061121f * std::exp((23.036f - temperature / 333.7f) * (temperature / (279.82f + temperature)))) /
+         (273.15f + temperature));
+  } else {
+    absolute_humidity =
+        216.67f *
+        ((humidity * 0.061121f * std::exp((18.678f - temperature / 234.5f) * (temperature / (257.14f + temperature)))) /
+         (273.15f + temperature));
+  }
+  uint8_t data[4] = {
+      SGP30_CMD_SET_ABSOLUTE_HUMIDITY & 0xFF,
+      uint8_t(std::floor(absolute_humidity)),                                          // humidity_full
+      uint8_t(std::floor((absolute_humidity - std::floor(absolute_humidity)) * 256)),  // humidity_dec
+      0,
+  };
+  data[3] = crc8(&data[1], 2, 0xFF, sensirion_common::CRC_POLYNOMIAL, true);
+  ESP_LOGD(TAG, "Calculated absolute humidity: %0.3f g/m³ (0x%04X)", absolute_humidity,
+           encode_uint16(data[1], data[2]));
   if (!this->write_bytes(SGP30_CMD_SET_ABSOLUTE_HUMIDITY >> 8, data, 4)) {
-    ESP_LOGE(TAG, "Error sending compensation data.");
+    ESP_LOGE(TAG, "Error sending compensation data");
   }
 }
 
 void SGP30Component::write_iaq_baseline_(uint16_t eco2_baseline, uint16_t tvoc_baseline) {
   uint8_t data[7];
   data[0] = SGP30_CMD_SET_IAQ_BASELINE & 0xFF;
-  data[1] = eco2_baseline >> 8;
-  data[2] = eco2_baseline & 0xFF;
-  data[3] = sht_crc_(data[1], data[2]);
-  data[4] = tvoc_baseline >> 8;
-  data[5] = tvoc_baseline & 0xFF;
-  data[6] = sht_crc_(data[4], data[5]);
+  data[1] = tvoc_baseline >> 8;
+  data[2] = tvoc_baseline & 0xFF;
+  data[3] = crc8(&data[1], 2, 0xFF, sensirion_common::CRC_POLYNOMIAL, true);
+  data[4] = eco2_baseline >> 8;
+  data[5] = eco2_baseline & 0xFF;
+  data[6] = crc8(&data[4], 2, 0xFF, sensirion_common::CRC_POLYNOMIAL, true);
   if (!this->write_bytes(SGP30_CMD_SET_IAQ_BASELINE >> 8, data, 7)) {
-    ESP_LOGE(TAG, "Error applying eCO2 baseline: 0x%04X, TVOC baseline: 0x%04X", eco2_baseline, tvoc_baseline);
-  } else
-    ESP_LOGI(TAG, "Initial eCO2 and TVOC baselines applied successfully!");
+    ESP_LOGE(TAG, "Error applying baselines: eCO2: 0x%04X, TVOC: 0x%04X", eco2_baseline, tvoc_baseline);
+  } else {
+    ESP_LOGI(TAG, "Initial baselines applied: eCO2: 0x%04X, TVOC: 0x%04X", eco2_baseline, tvoc_baseline);
+  }
 }
 
 void SGP30Component::dump_config() {
@@ -180,53 +229,58 @@ void SGP30Component::dump_config() {
   if (this->is_failed()) {
     switch (this->error_code_) {
       case COMMUNICATION_FAILED:
-        ESP_LOGW(TAG, "Communication failed! Is the sensor connected?");
+        ESP_LOGW(TAG, ESP_LOG_MSG_COMM_FAIL);
         break;
       case MEASUREMENT_INIT_FAILED:
-        ESP_LOGW(TAG, "Measurement Initialization failed!");
+        ESP_LOGW(TAG, "Measurement Initialization failed");
         break;
       case INVALID_ID:
-        ESP_LOGW(TAG, "Sensor reported an invalid ID. Is this an SGP30?");
+        ESP_LOGW(TAG, "Invalid ID");
         break;
       case UNSUPPORTED_ID:
-        ESP_LOGW(TAG, "Sensor reported an unsupported ID (SGPC3).");
+        ESP_LOGW(TAG, "Unsupported ID");
         break;
       default:
-        ESP_LOGW(TAG, "Unknown setup error!");
+        ESP_LOGW(TAG, "Unknown setup error");
         break;
     }
   } else {
-    ESP_LOGCONFIG(TAG, "  Serial number: %llu", this->serial_number_);
+    ESP_LOGCONFIG(TAG, "  Serial number: %" PRIu64, this->serial_number_);
     if (this->eco2_baseline_ != 0x0000 && this->tvoc_baseline_ != 0x0000) {
-      ESP_LOGCONFIG(TAG, "  Baseline:");
-      ESP_LOGCONFIG(TAG, "    eCO2 Baseline: 0x%04X", this->eco2_baseline_);
-      ESP_LOGCONFIG(TAG, "    TVOC Baseline: 0x%04X", this->tvoc_baseline_);
+      ESP_LOGCONFIG(TAG,
+                    "  Baselines:\n"
+                    "    eCO2: 0x%04X\n"
+                    "    TVOC: 0x%04X",
+                    this->eco2_baseline_, this->tvoc_baseline_);
     } else {
-      ESP_LOGCONFIG(TAG, "  Baseline: No baseline configured");
+      ESP_LOGCONFIG(TAG, "  Baselines not configured");
     }
-    ESP_LOGCONFIG(TAG, "  Warm up time: %lds", this->required_warm_up_time_);
+    ESP_LOGCONFIG(TAG, "  Warm up time: %" PRIu32 "s", this->required_warm_up_time_);
   }
   LOG_UPDATE_INTERVAL(this);
-  LOG_SENSOR("  ", "eCO2", this->eco2_sensor_);
-  LOG_SENSOR("  ", "TVOC", this->tvoc_sensor_);
+  LOG_SENSOR("  ", "eCO2 sensor", this->eco2_sensor_);
+  LOG_SENSOR("  ", "TVOC sensor", this->tvoc_sensor_);
+  LOG_SENSOR("  ", "eCO2 baseline sensor", this->eco2_sensor_baseline_);
+  LOG_SENSOR("  ", "TVOC baseline sensor", this->tvoc_sensor_baseline_);
+  ESP_LOGCONFIG(TAG, "Store baseline: %s", YESNO(this->store_baseline_));
   if (this->humidity_sensor_ != nullptr && this->temperature_sensor_ != nullptr) {
     ESP_LOGCONFIG(TAG, "  Compensation:");
-    LOG_SENSOR("    ", "Temperature Source:", this->temperature_sensor_);
-    LOG_SENSOR("    ", "Humidity Source:", this->humidity_sensor_);
+    LOG_SENSOR("    ", "Temperature source:", this->temperature_sensor_);
+    LOG_SENSOR("    ", "Humidity source:", this->humidity_sensor_);
   } else {
     ESP_LOGCONFIG(TAG, "  Compensation: No source configured");
   }
 }
 
 void SGP30Component::update() {
-  if (!this->write_command_(SGP30_CMD_MEASURE_IAQ)) {
+  if (!this->write_command(SGP30_CMD_MEASURE_IAQ)) {
     this->status_set_warning();
     return;
   }
-
+  this->seconds_since_last_store_ += this->update_interval_ / 1000;
   this->set_timeout(50, [this]() {
     uint16_t raw_data[2];
-    if (!this->read_data_(raw_data, 2)) {
+    if (!this->read_data(raw_data, 2)) {
       this->status_set_warning();
       return;
     }
@@ -234,67 +288,16 @@ void SGP30Component::update() {
     float eco2 = (raw_data[0]);
     float tvoc = (raw_data[1]);
 
-    ESP_LOGD(TAG, "Got eCO2=%.1fppm TVOC=%.1fppb", eco2, tvoc);
+    ESP_LOGV(TAG, "eCO2=%.1fppm TVOC=%.1fppb", eco2, tvoc);
     if (this->eco2_sensor_ != nullptr)
       this->eco2_sensor_->publish_state(eco2);
     if (this->tvoc_sensor_ != nullptr)
       this->tvoc_sensor_->publish_state(tvoc);
+
     this->status_clear_warning();
     this->send_env_data_();
     this->read_iaq_baseline_();
   });
-}
-
-bool SGP30Component::write_command_(uint16_t command) {
-  // Warning ugly, trick the I2Ccomponent base by setting register to the first 8 bit.
-  return this->write_byte(command >> 8, command & 0xFF);
-}
-
-uint8_t SGP30Component::sht_crc_(uint8_t data1, uint8_t data2) {
-  uint8_t bit;
-  uint8_t crc = 0xFF;
-
-  crc ^= data1;
-  for (bit = 8; bit > 0; --bit) {
-    if (crc & 0x80)
-      crc = (crc << 1) ^ 0x131;
-    else
-      crc = (crc << 1);
-  }
-
-  crc ^= data2;
-  for (bit = 8; bit > 0; --bit) {
-    if (crc & 0x80)
-      crc = (crc << 1) ^ 0x131;
-    else
-      crc = (crc << 1);
-  }
-
-  return crc;
-}
-
-bool SGP30Component::read_data_(uint16_t *data, uint8_t len) {
-  const uint8_t num_bytes = len * 3;
-  auto *buf = new uint8_t[num_bytes];
-
-  if (!this->parent_->raw_receive(this->address_, buf, num_bytes)) {
-    delete[](buf);
-    return false;
-  }
-
-  for (uint8_t i = 0; i < len; i++) {
-    const uint8_t j = 3 * i;
-    uint8_t crc = sht_crc_(buf[j], buf[j + 1]);
-    if (crc != buf[j + 2]) {
-      ESP_LOGE(TAG, "CRC8 Checksum invalid! 0x%02X != 0x%02X", buf[j + 2], crc);
-      delete[](buf);
-      return false;
-    }
-    data[i] = (buf[j] << 8) | buf[j + 1];
-  }
-
-  delete[](buf);
-  return true;
 }
 
 }  // namespace sgp30

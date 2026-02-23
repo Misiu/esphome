@@ -1,19 +1,27 @@
 #pragma once
 
-#include "esphome/core/component.h"
+#include "esphome/core/entity_base.h"
 #include "esphome/core/helpers.h"
+#ifdef USE_BINARY_SENSOR_FILTER
 #include "esphome/components/binary_sensor/filter.h"
+#endif
 
-namespace esphome {
+#include <initializer_list>
 
-namespace binary_sensor {
+namespace esphome::binary_sensor {
 
-#define LOG_BINARY_SENSOR(prefix, type, obj) \
-  if (obj != nullptr) { \
-    ESP_LOGCONFIG(TAG, "%s%s '%s'", prefix, type, obj->get_name().c_str()); \
-    if (!obj->get_device_class().empty()) { \
-      ESP_LOGCONFIG(TAG, "%s  Device Class: '%s'", prefix, obj->get_device_class().c_str()); \
-    } \
+class BinarySensor;
+void log_binary_sensor(const char *tag, const char *prefix, const char *type, BinarySensor *obj);
+
+#define LOG_BINARY_SENSOR(prefix, type, obj) log_binary_sensor(TAG, prefix, LOG_STR_LITERAL(type), obj)
+
+#define SUB_BINARY_SENSOR(name) \
+ protected: \
+  binary_sensor::BinarySensor *name##_binary_sensor_{nullptr}; \
+\
+ public: \
+  void set_##name##_binary_sensor(binary_sensor::BinarySensor *binary_sensor) { \
+    this->name##_binary_sensor_ = binary_sensor; \
   }
 
 /** Base class for all binary_sensor-type classes.
@@ -22,68 +30,45 @@ namespace binary_sensor {
  * The sub classes should notify the front-end of new states via the publish_state() method which
  * handles inverted inputs for you.
  */
-class BinarySensor : public Nameable {
+class BinarySensor : public StatefulEntityBase<bool>, public EntityBase_DeviceClass {
  public:
-  explicit BinarySensor();
-  /** Construct a binary sensor with the specified name
-   *
-   * @param name Name of this binary sensor.
-   */
-  explicit BinarySensor(const std::string &name);
-
-  /** Add a callback to be notified of state changes.
-   *
-   * @param callback The void(bool) callback.
-   */
-  void add_on_state_callback(std::function<void(bool)> &&callback);
+  explicit BinarySensor(){};
 
   /** Publish a new state to the front-end.
    *
-   * @param state The new state.
+   * @param new_state The new state.
    */
-  void publish_state(bool state);
+  void publish_state(bool new_state);
 
   /** Publish the initial state, this will not make the callback manager send callbacks
    * and is meant only for the initial state on boot.
    *
-   * @param state The new state.
+   * @param new_state The new state.
    */
-  void publish_initial_state(bool state);
+  void publish_initial_state(bool new_state);
 
-  /// The current reported state of the binary sensor.
-  bool state;
-
-  /// Manually set the Home Assistant device class (see binary_sensor::device_class)
-  void set_device_class(const std::string &device_class);
-
-  /// Get the device class for this binary sensor, using the manual override if specified.
-  std::string get_device_class();
-
+#ifdef USE_BINARY_SENSOR_FILTER
   void add_filter(Filter *filter);
-  void add_filters(std::vector<Filter *> filters);
+  void add_filters(std::initializer_list<Filter *> filters);
+#endif
 
   // ========== INTERNAL METHODS ==========
   // (In most use cases you won't need these)
-  void send_state_internal(bool state, bool is_initial);
+  void send_state_internal(bool new_state);
 
   /// Return whether this binary sensor has outputted a state.
-  virtual bool has_state() const;
-
   virtual bool is_status_binary_sensor() const;
 
-  // ========== OVERRIDE METHODS ==========
-  // (You'll only need this when creating your own custom binary sensor)
-  /// Get the default device class for this sensor, or empty string for no default.
-  virtual std::string device_class();
+  // For backward compatibility, provide an accessible property
+
+  bool state{};
 
  protected:
-  uint32_t hash_base() override;
-
-  CallbackManager<void(bool)> state_callback_{};
-  optional<std::string> device_class_{};  ///< Stores the override of the device class
+#ifdef USE_BINARY_SENSOR_FILTER
   Filter *filter_list_{nullptr};
-  bool has_state_{false};
-  Deduplicator<bool> publish_dedup_;
+#endif
+
+  bool set_new_state(const optional<bool> &new_state) override;
 };
 
 class BinarySensorInitiallyOff : public BinarySensor {
@@ -91,5 +76,4 @@ class BinarySensorInitiallyOff : public BinarySensor {
   bool has_state() const override { return true; }
 };
 
-}  // namespace binary_sensor
-}  // namespace esphome
+}  // namespace esphome::binary_sensor

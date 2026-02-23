@@ -4,17 +4,15 @@
 namespace esphome {
 namespace gps {
 
-static const char *TAG = "gps.time";
+static const char *const TAG = "gps.time";
 
 void GPSTime::from_tiny_gps_(TinyGPSPlus &tiny_gps) {
-  if (!tiny_gps.time.isValid() || !tiny_gps.date.isValid())
+  if (!tiny_gps.time.isValid() || !tiny_gps.date.isValid() || !tiny_gps.time.isUpdated() ||
+      !tiny_gps.date.isUpdated() || tiny_gps.date.year() < 2025) {
     return;
-  if (!tiny_gps.time.isUpdated() || !tiny_gps.date.isUpdated())
-    return;
-  if (tiny_gps.date.year() < 2019)
-    return;
+  }
 
-  time::ESPTime val{};
+  ESPTime val{};
   val.year = tiny_gps.date.year();
   val.month = tiny_gps.date.month();
   val.day_of_month = tiny_gps.date.day();

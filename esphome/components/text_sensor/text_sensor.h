@@ -1,51 +1,87 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/entity_base.h"
 #include "esphome/core/helpers.h"
+#ifdef USE_TEXT_SENSOR_FILTER
+#include "esphome/components/text_sensor/filter.h"
+#endif
+
+#include <initializer_list>
+#include <memory>
 
 namespace esphome {
 namespace text_sensor {
 
-#define LOG_TEXT_SENSOR(prefix, type, obj) \
-  if (obj != nullptr) { \
-    ESP_LOGCONFIG(TAG, "%s%s '%s'", prefix, type, obj->get_name().c_str()); \
-    if (!obj->get_icon().empty()) { \
-      ESP_LOGCONFIG(TAG, "%s  Icon: '%s'", prefix, obj->get_icon().c_str()); \
-    } \
-    if (!obj->unique_id().empty()) { \
-      ESP_LOGV(TAG, "%s  Unique ID: '%s'", prefix, obj->unique_id().c_str()); \
-    } \
-  }
+class TextSensor;
 
-class TextSensor : public Nameable {
+void log_text_sensor(const char *tag, const char *prefix, const char *type, TextSensor *obj);
+
+#define LOG_TEXT_SENSOR(prefix, type, obj) log_text_sensor(TAG, prefix, LOG_STR_LITERAL(type), obj)
+
+#define SUB_TEXT_SENSOR(name) \
+ protected: \
+  text_sensor::TextSensor *name##_text_sensor_{nullptr}; \
+\
+ public: \
+  void set_##name##_text_sensor(text_sensor::TextSensor *text_sensor) { this->name##_text_sensor_ = text_sensor; }
+
+class TextSensor : public EntityBase, public EntityBase_DeviceClass {
  public:
-  explicit TextSensor();
-  explicit TextSensor(const std::string &name);
-
-  void publish_state(std::string state);
-
-  void set_icon(const std::string &icon);
-
-  void add_on_state_callback(std::function<void(std::string)> callback);
-
   std::string state;
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+  /// @deprecated Use get_raw_state() instead. This member will be removed in ESPHome 2026.6.0.
+  ESPDEPRECATED("Use get_raw_state() instead of .raw_state. Will be removed in 2026.6.0", "2025.12.0")
+  std::string raw_state;
+
+  TextSensor() = default;
+  ~TextSensor() = default;
+#pragma GCC diagnostic pop
+
+  /// Getter-syntax for .state.
+  const std::string &get_state() const;
+  /// Getter-syntax for .raw_state
+  const std::string &get_raw_state() const;
+
+  void publish_state(const std::string &state);
+  void publish_state(const char *state);
+  void publish_state(const char *state, size_t len);
+
+#ifdef USE_TEXT_SENSOR_FILTER
+  /// Add a filter to the filter chain. Will be appended to the back.
+  void add_filter(Filter *filter);
+
+  /// Add a list of vectors to the back of the filter chain.
+  void add_filters(std::initializer_list<Filter *> filters);
+
+  /// Clear the filters and replace them by filters.
+  void set_filters(std::initializer_list<Filter *> filters);
+
+  /// Clear the entire filter chain.
+  void clear_filters();
+#endif
+
+  void add_on_state_callback(std::function<void(const std::string &)> callback);
+  /// Add a callback that will be called every time the sensor sends a raw value.
+  void add_on_raw_state_callback(std::function<void(const std::string &)> callback);
 
   // ========== INTERNAL METHODS ==========
   // (In most use cases you won't need these)
-  std::string get_icon();
 
-  virtual std::string icon();
-
-  virtual std::string unique_id();
-
-  bool has_state();
+  void internal_send_state_to_frontend(const std::string &state);
+  void internal_send_state_to_frontend(const char *state, size_t len);
 
  protected:
-  uint32_t hash_base() override;
+  /// Notify frontend that state has changed (assumes this->state is already set)
+  void notify_frontend_();
+  LazyCallbackManager<void(const std::string &)> raw_callback_;  ///< Storage for raw state callbacks.
+  LazyCallbackManager<void(const std::string &)> callback_;      ///< Storage for filtered state callbacks.
 
-  CallbackManager<void(std::string)> callback_;
-  optional<std::string> icon_;
-  bool has_state_{false};
+#ifdef USE_TEXT_SENSOR_FILTER
+  Filter *filter_list_{nullptr};  ///< Store all active filters.
+#endif
 };
 
 }  // namespace text_sensor

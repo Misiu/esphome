@@ -1,189 +1,225 @@
 #pragma once
 
-#include <Wire.h>
-#include "esphome/core/component.h"
+#include <array>
+#include <vector>
 #include "esphome/core/helpers.h"
+#include "esphome/core/optional.h"
+#include "i2c_bus.h"
 
 namespace esphome {
 namespace i2c {
 
 #define LOG_I2C_DEVICE(this) ESP_LOGCONFIG(TAG, "  Address: 0x%02X", this->address_);
 
-/** The I2CComponent is the base of ESPHome's i2c communication.
- *
- * It handles setting up the bus (with pins, clock frequency) and provides nice helper functions to
- * make reading from the i2c bus easier (see read_bytes, write_bytes) and safe (with read timeouts).
- *
- * For the user, it has a few setters (see set_sda_pin, set_scl_pin, set_frequency)
- * to setup some parameters for the bus. Additionally, the i2c component has a scan feature that will
- * scan the entire 7-bit i2c address range for devices that respond to transmissions to make finding
- * the address of an i2c device easier.
- *
- * On the ESP32, you can even have multiple I2C bus for communication, simply create multiple
- * I2CComponents, each with different SDA and SCL pins and use `set_parent` on all I2CDevices that use
- * the non-first I2C bus.
- */
-class I2CComponent : public Component {
- public:
-  I2CComponent();
-  void set_sda_pin(uint8_t sda_pin) { sda_pin_ = sda_pin; }
-  void set_scl_pin(uint8_t scl_pin) { scl_pin_ = scl_pin; }
-  void set_frequency(uint32_t frequency) { frequency_ = frequency; }
-  void set_scan(bool scan) { scan_ = scan; }
+class I2CDevice;  // forward declaration
 
-  /** Read len amount of bytes from a register into data. Optionally with a conversion time after
-   * writing the register value to the bus.
-   *
-   * @param address The address to send the request to.
-   * @param a_register The register number to write to the bus before reading.
-   * @param data An array to store len amount of 8-bit bytes into.
-   * @param len The amount of bytes to request and write into data.
-   * @param conversion The time in ms between writing the register value and reading out the value.
-   * @return If the operation was successful.
-   */
-  bool read_bytes(uint8_t address, uint8_t a_register, uint8_t *data, uint8_t len, uint32_t conversion = 0);
-  bool read_bytes_raw(uint8_t address, uint8_t *data, uint8_t len);
-
-  /** Read len amount of 16-bit words (MSB first) from a register into data.
-   *
-   * @param address The address to send the request to.
-   * @param a_register The register number to write to the bus before reading.
-   * @param data An array to store len amount of 16-bit words into.
-   * @param len The amount of 16-bit words to request and write into data.
-   * @param conversion The time in ms between writing the register value and reading out the value.
-   * @return If the operation was successful.
-   */
-  bool read_bytes_16(uint8_t address, uint8_t a_register, uint16_t *data, uint8_t len, uint32_t conversion = 0);
-
-  /// Read a single byte from a register into the data variable. Return true if successful.
-  bool read_byte(uint8_t address, uint8_t a_register, uint8_t *data, uint32_t conversion = 0);
-
-  /// Read a single 16-bit words (MSB first) from a register into the data variable. Return true if successful.
-  bool read_byte_16(uint8_t address, uint8_t a_register, uint16_t *data, uint32_t conversion = 0);
-
-  /** Write len amount of 8-bit bytes to the specified register for address.
-   *
-   * @param address The address to use for the transmission.
-   * @param a_register The register to write the values to.
-   * @param data An array from which len bytes of data will be written to the bus.
-   * @param len The amount of bytes to write to the bus.
-   * @return If the operation was successful.
-   */
-  bool write_bytes(uint8_t address, uint8_t a_register, const uint8_t *data, uint8_t len);
-  bool write_bytes_raw(uint8_t address, const uint8_t *data, uint8_t len);
-
-  /** Write len amount of 16-bit words (MSB first) to the specified register for address.
-   *
-   * @param address The address to use for the transmission.
-   * @param a_register The register to write the values to.
-   * @param data An array from which len 16-bit words of data will be written to the bus.
-   * @param len The amount of bytes to write to the bus.
-   * @return If the operation was successful.
-   */
-  bool write_bytes_16(uint8_t address, uint8_t a_register, const uint16_t *data, uint8_t len);
-
-  /// Write a single byte of data into the specified register of address. Return true if successful.
-  bool write_byte(uint8_t address, uint8_t a_register, uint8_t data);
-
-  /// Write a single 16-bit word of data into the specified register of address. Return true if successful.
-  bool write_byte_16(uint8_t address, uint8_t a_register, uint16_t data);
-
-  // ========== INTERNAL METHODS ==========
-  // (In most use cases you won't need these)
-  /// Begin a write transmission to an address.
-  void raw_begin_transmission(uint8_t address);
-
-  /// End a write transmission to an address, return true if successful.
-  bool raw_end_transmission(uint8_t address);
-
-  /** Request data from an address with a number of (8-bit) bytes.
-   *
-   * @param address The address to request the bytes from.
-   * @param len The number of bytes to receive, must not be 0.
-   * @return True if all requested bytes were read, false otherwise.
-   */
-  bool raw_request_from(uint8_t address, uint8_t len);
-
-  /// Write len amount of bytes from data to address. begin_transmission_ must be called before this.
-  void raw_write(uint8_t address, const uint8_t *data, uint8_t len);
-
-  /// Write len amount of 16-bit words from data to address. begin_transmission_ must be called before this.
-  void raw_write_16(uint8_t address, const uint16_t *data, uint8_t len);
-
-  /// Request len amount of bytes from address and write the result it into data. Returns true iff was successful.
-  bool raw_receive(uint8_t address, uint8_t *data, uint8_t len);
-
-  /// Request len amount of 16-bit words from address and write the result into data. Returns true iff was successful.
-  bool raw_receive_16(uint8_t address, uint16_t *data, uint8_t len);
-
-  /// Setup the i2c. bus
-  void setup() override;
-  void dump_config() override;
-  /// Set a very high setup priority to make sure it's loaded before all other hardware.
-  float get_setup_priority() const override;
-
- protected:
-  TwoWire *wire_;
-  uint8_t sda_pin_;
-  uint8_t scl_pin_;
-  uint32_t frequency_;
-  bool scan_;
-};
-
-#ifdef ARDUINO_ARCH_ESP32
-extern uint8_t next_i2c_bus_num_;
-#endif
-
-class I2CDevice;
-
+/// @brief This class is used to create I2CRegister objects that act as proxies to read/write internal registers on an
+/// I2C device.
+/// @details
+/// @n typical usage:
+/// @code
+/// constexpr uint8_t ADDR_REGISTER_1 = 0x12;
+/// i2c::I2CRegister reg_1 = this->reg(ADDR_REGISTER_1); // declare
+/// reg_1 |= 0x01; // set bit
+/// reg_1 &= ~0x01; // reset bit
+/// reg_1 = 10; // Set value
+/// uint val = reg_1.get(); // get value
+/// @endcode
+/// @details The I²C protocol specifies how to read/write in sets of 8-bits followed by an Acknowledgement (ACK/NACK)
+/// from the device receiving the data. How the device interprets the bits read/written can vary greatly from
+/// device to device. However most of the devices follow the same protocol for reading/writing 8 bit registers using as
+/// implemented in the I2CRegister: after sending the device address, the controller sends one byte with the internal
+/// register address and then read or write the specified register content.
 class I2CRegister {
  public:
-  I2CRegister(I2CDevice *parent, uint8_t a_register) : parent_(parent), register_(a_register) {}
-
+  /// @brief overloads the = operator. This allows to set the value of an i2c register
+  /// @param value value to be set in the register
+  /// @return pointer to current object
   I2CRegister &operator=(uint8_t value);
-  I2CRegister &operator=(const std::vector<uint8_t> &value);
+
+  /// @brief overloads the compound &= operator. This allows to reset specific bits of an I²C register
+  /// @param value used for the & operation
+  /// @return pointer to current object
   I2CRegister &operator&=(uint8_t value);
+
+  /// @brief overloads the compound |= operator. This allows to set specific bits of an I²C register
+  /// @param value used for the & operation
+  /// @return pointer to current object
   I2CRegister &operator|=(uint8_t value);
 
-  uint8_t get();
+  /// @brief overloads the uint8_t() cast operator to return the I²C register value
+  /// @return pointer to current object
+  explicit operator uint8_t() const { return get(); }
+
+  /// @brief returns the register value
+  /// @return the register value
+  uint8_t get() const;
 
  protected:
-  I2CDevice *parent_;
-  uint8_t register_;
+  friend class I2CDevice;
+
+  /// @brief protected constructor that stores the owning object and the register address. Note as only friends can
+  /// create an I2CRegister @see I2CDevice::reg()
+  /// @param parent our parent
+  /// @param a_register address of the i2c register
+  I2CRegister(I2CDevice *parent, uint8_t a_register) : parent_(parent), register_(a_register) {}
+
+  I2CDevice *parent_;  ///< I2CDevice object pointer
+  uint8_t register_;   ///< the internal address of the register
 };
 
-/** All components doing communication on the I2C bus should subclass I2CDevice.
- *
- * This class stores 1. the address of the i2c device and has a helper function to allow
- * users to manually set the address and 2. stores a reference to the "parent" I2CComponent.
- *
- *
- * All this class basically does is to expose all helper functions from I2CComponent.
- */
+/// @brief This class is used to create I2CRegister16 objects that act as proxies to read/write internal registers
+/// (specified with a 16 bit address) on an I2C device.
+/// @details
+/// @n typical usage:
+/// @code
+/// constexpr uint16_t X16_BIT_ADDR_REGISTER_1 = 0x1234;
+/// i2c::I2CRegister16 reg_1 = this->reg16(X16_BIT_ADDR_REGISTER_1); // declare
+/// reg_1 |= 0x01; // set bit
+/// reg_1 &= ~0x01; // reset bit
+/// reg_1 = 10; // Set value
+/// uint val = reg_1.get(); // get value
+/// @endcode
+/// @details The I²C protocol specification, reads/writes in sets of 8-bits followed by an Acknowledgement (ACK/NACK)
+/// from the device receiving the data. How the device interprets the bits read/written to it can vary greatly from
+/// device to device. This class can be used to access in the device 8 bits registers that uses a 16 bits internal
+/// address. After sending the device address, the controller sends the internal register address (using two consecutive
+/// bytes following the big indian convention) and then read or write the register content.
+class I2CRegister16 {
+ public:
+  /// @brief overloads the = operator. This allows to set the value of an I²C register
+  /// @param value value to be set in the register
+  /// @return pointer to current object
+  I2CRegister16 &operator=(uint8_t value);
+
+  /// @brief overloads the compound &= operator. This allows to reset specific bits of an I²C register
+  /// @param value used for the & operation
+  /// @return pointer to current object
+  I2CRegister16 &operator&=(uint8_t value);
+
+  /// @brief overloads the compound |= operator. This allows to set bits of an I²C register
+  /// @param value used for the & operation
+  /// @return pointer to current object
+  I2CRegister16 &operator|=(uint8_t value);
+
+  /// @brief overloads the uint8_t() cast operator to return the I²C register value
+  /// @return the register value
+  explicit operator uint8_t() const { return get(); }
+
+  /// @brief returns the register value
+  /// @return the register value
+  uint8_t get() const;
+
+ protected:
+  friend class I2CDevice;
+
+  /// @brief protected constructor that store the owning object and the register address. Only friends can create an
+  /// I2CRegister16 @see I2CDevice::reg16()
+  /// @param parent our parent
+  /// @param a_register 16 bits address of the i2c register
+  I2CRegister16(I2CDevice *parent, uint16_t a_register) : parent_(parent), register_(a_register) {}
+
+  I2CDevice *parent_;  ///< I2CDevice object pointer
+  uint16_t register_;  ///< the internal 16 bits address of the register
+};
+
+// like ntohs/htons but without including networking headers.
+// ("i2c" byte order is big-endian)
+inline uint16_t i2ctohs(uint16_t i2cshort) { return convert_big_endian(i2cshort); }
+inline uint16_t htoi2cs(uint16_t hostshort) { return convert_big_endian(hostshort); }
+
+/// @brief This Class provides the methods to read/write bytes from/to an i2c device.
+/// Objects keep a list of devices found on bus as well as a pointer to the I2CBus in use.
 class I2CDevice {
  public:
+  /// @brief we use the C++ default constructor
   I2CDevice() = default;
-  I2CDevice(I2CComponent *parent, uint8_t address) : address_(address), parent_(parent) {}
 
-  /// Manually set the i2c address of this device.
-  void set_i2c_address(uint8_t address);
+  /// @brief We store the address of the device on the bus
+  /// @param address of the device
+  void set_i2c_address(uint8_t address) { address_ = address; }
 
-  /// Manually set the parent i2c bus for this device.
-  void set_i2c_parent(I2CComponent *parent);
+  /// @brief Returns the I2C address of the object.
+  /// @return the I2C address
+  uint8_t get_i2c_address() const { return this->address_; }
 
+  /// @brief we store the pointer to the I2CBus to use
+  /// @param bus pointer to the I2CBus object
+  void set_i2c_bus(I2CBus *bus) { bus_ = bus; }
+
+  /// @brief calls the I2CRegister constructor
+  /// @param a_register address of the I²C register
+  /// @return an I2CRegister proxy object
   I2CRegister reg(uint8_t a_register) { return {this, a_register}; }
 
-  /** Read len amount of bytes from a register into data. Optionally with a conversion time after
-   * writing the register value to the bus.
-   *
-   * @param a_register The register number to write to the bus before reading.
-   * @param data An array to store len amount of 8-bit bytes into.
-   * @param len The amount of bytes to request and write into data.
-   * @param conversion The time in ms between writing the register value and reading out the value.
-   * @return If the operation was successful.
-   */
-  bool read_bytes(uint8_t a_register, uint8_t *data, uint8_t len, uint32_t conversion = 0);
-  bool read_bytes_raw(uint8_t *data, uint8_t len) { return this->parent_->read_bytes_raw(this->address_, data, len); }
+  /// @brief calls the I2CRegister16 constructor
+  /// @param a_register 16 bits address of the I²C register
+  /// @return an I2CRegister16 proxy object
+  I2CRegister16 reg16(uint16_t a_register) { return {this, a_register}; }
+
+  /// @brief reads an array of bytes from the device using an I2CBus
+  /// @param data pointer to an array to store the bytes
+  /// @param len length of the buffer = number of bytes to read
+  /// @return an i2c::ErrorCode
+  ErrorCode read(uint8_t *data, size_t len) const { return bus_->write_readv(this->address_, nullptr, 0, data, len); }
+
+  /// @brief reads an array of bytes from a specific register in the I²C device
+  /// @param a_register an 8 bits internal address of the I²C register to read from
+  /// @param data pointer to an array to store the bytes
+  /// @param len length of the buffer = number of bytes to read
+  /// @return an i2c::ErrorCode
+  ErrorCode read_register(uint8_t a_register, uint8_t *data, size_t len);
+
+  /// @brief reads an array of bytes from a specific register in the I²C device
+  /// @param a_register the 16 bits internal address of the I²C register to read from
+  /// @param data pointer to an array of bytes to store the information
+  /// @param len length of the buffer = number of bytes to read
+  /// @return an i2c::ErrorCode
+  ErrorCode read_register16(uint16_t a_register, uint8_t *data, size_t len);
+
+  /// @brief writes an array of bytes to a device using an I2CBus
+  /// @param data pointer to an array that contains the bytes to send
+  /// @param len length of the buffer = number of bytes to write
+  /// @return an i2c::ErrorCode
+  ErrorCode write(const uint8_t *data, size_t len) const {
+    return bus_->write_readv(this->address_, data, len, nullptr, 0);
+  }
+
+  /// @brief writes an array of bytes to a device, then reads an array, as a single transaction
+  /// @param write_data pointer to an array that contains the bytes to send
+  /// @param write_len length of the buffer = number of bytes to write
+  /// @param read_data pointer to an array to store the bytes read
+  /// @param read_len length of the buffer = number of bytes to read
+  /// @return an i2c::ErrorCode
+  ErrorCode write_read(const uint8_t *write_data, size_t write_len, uint8_t *read_data, size_t read_len) const {
+    return bus_->write_readv(this->address_, write_data, write_len, read_data, read_len);
+  }
+
+  /// @brief writes an array of bytes to a specific register in the I²C device
+  /// @param a_register the internal address of the register to read from
+  /// @param data pointer to an array to store the bytes
+  /// @param len length of the buffer = number of bytes to read
+  /// @return an i2c::ErrorCode
+  ErrorCode write_register(uint8_t a_register, const uint8_t *data, size_t len) const;
+
+  /// @brief write an array of bytes to a specific register in the I²C device
+  /// @param a_register the 16 bits internal address of the register to read from
+  /// @param data pointer to an array to store the bytes
+  /// @param len length of the buffer = number of bytes to read
+  /// @return an i2c::ErrorCode
+  ErrorCode write_register16(uint16_t a_register, const uint8_t *data, size_t len) const;
+
+  ///
+  /// Compat APIs
+  /// All methods below have been added for compatibility reasons. They do not bring any functionality and therefore on
+  /// new code it is not recommend to use them.
+  ///
+
+  bool read_bytes(uint8_t a_register, uint8_t *data, uint8_t len) {
+    return read_register(a_register, data, len) == ERROR_OK;
+  }
+
+  bool read_bytes_raw(uint8_t *data, uint8_t len) const { return read(data, len) == ERROR_OK; }
 
   template<size_t N> optional<std::array<uint8_t, N>> read_bytes(uint8_t a_register) {
     std::array<uint8_t, N> res;
@@ -200,18 +236,9 @@ class I2CDevice {
     return res;
   }
 
-  /** Read len amount of 16-bit words (MSB first) from a register into data.
-   *
-   * @param a_register The register number to write to the bus before reading.
-   * @param data An array to store len amount of 16-bit words into.
-   * @param len The amount of 16-bit words to request and write into data.
-   * @param conversion The time in ms between writing the register value and reading out the value.
-   * @return If the operation was successful.
-   */
-  bool read_bytes_16(uint8_t a_register, uint16_t *data, uint8_t len, uint32_t conversion = 0);
+  bool read_bytes_16(uint8_t a_register, uint16_t *data, uint8_t len);
 
-  /// Read a single byte from a register into the data variable. Return true if successful.
-  bool read_byte(uint8_t a_register, uint8_t *data, uint32_t conversion = 0);
+  bool read_byte(uint8_t a_register, uint8_t *data) { return read_register(a_register, data, 1) == ERROR_OK; }
 
   optional<uint8_t> read_byte(uint8_t a_register) {
     uint8_t data;
@@ -220,57 +247,29 @@ class I2CDevice {
     return data;
   }
 
-  /// Read a single 16-bit words (MSB first) from a register into the data variable. Return true if successful.
-  bool read_byte_16(uint8_t a_register, uint16_t *data, uint32_t conversion = 0);
+  bool read_byte_16(uint8_t a_register, uint16_t *data) { return read_bytes_16(a_register, data, 1); }
 
-  /** Write len amount of 8-bit bytes to the specified register.
-   *
-   * @param a_register The register to write the values to.
-   * @param data An array from which len bytes of data will be written to the bus.
-   * @param len The amount of bytes to write to the bus.
-   * @return If the operation was successful.
-   */
-  bool write_bytes(uint8_t a_register, const uint8_t *data, uint8_t len);
-  bool write_bytes_raw(const uint8_t *data, uint8_t len) {
-    return this->parent_->write_bytes_raw(this->address_, data, len);
+  bool write_bytes(uint8_t a_register, const uint8_t *data, uint8_t len) const {
+    return write_register(a_register, data, len) == ERROR_OK;
   }
 
-  /** Write a vector of data to a register.
-   *
-   * @param a_register The register to write to.
-   * @param data The data to write.
-   * @return If the operation was successful.
-   */
-  bool write_bytes(uint8_t a_register, const std::vector<uint8_t> &data) {
-    return this->write_bytes(a_register, data.data(), data.size());
+  bool write_bytes(uint8_t a_register, const std::vector<uint8_t> &data) const {
+    return write_bytes(a_register, data.data(), data.size());
   }
-  bool write_bytes_raw(const std::vector<uint8_t> &data) { return this->write_bytes_raw(data.data(), data.size()); }
 
   template<size_t N> bool write_bytes(uint8_t a_register, const std::array<uint8_t, N> &data) {
-    return this->write_bytes(a_register, data.data(), data.size());
-  }
-  template<size_t N> bool write_bytes_raw(const std::array<uint8_t, N> &data) {
-    return this->write_bytes_raw(data.data(), data.size());
+    return write_bytes(a_register, data.data(), data.size());
   }
 
-  /** Write len amount of 16-bit words (MSB first) to the specified register.
-   *
-   * @param a_register The register to write the values to.
-   * @param data An array from which len 16-bit words of data will be written to the bus.
-   * @param len The amount of bytes to write to the bus.
-   * @return If the operation was successful.
-   */
-  bool write_bytes_16(uint8_t a_register, const uint16_t *data, uint8_t len);
+  bool write_bytes_16(uint8_t a_register, const uint16_t *data, uint8_t len) const;
 
-  /// Write a single byte of data into the specified register. Return true if successful.
-  bool write_byte(uint8_t a_register, uint8_t data);
+  bool write_byte(uint8_t a_register, uint8_t data) const { return write_bytes(a_register, &data, 1); }
 
-  /// Write a single 16-bit word of data into the specified register. Return true if successful.
-  bool write_byte_16(uint8_t a_register, uint16_t data);
+  bool write_byte_16(uint8_t a_register, uint16_t data) const { return write_bytes_16(a_register, &data, 1); }
 
  protected:
-  uint8_t address_{0x00};
-  I2CComponent *parent_{nullptr};
+  uint8_t address_{0x00};  ///< store the address of the device on the bus
+  I2CBus *bus_{nullptr};   ///< pointer to I2CBus instance
 };
 
 }  // namespace i2c

@@ -5,7 +5,7 @@
 #include "esphome/components/esp32_ble_tracker/esp32_ble_tracker.h"
 #include "esphome/components/ruuvi_ble/ruuvi_ble.h"
 
-#ifdef ARDUINO_ARCH_ESP32
+#ifdef USE_ESP32
 
 namespace esphome {
 namespace ruuvitag {
@@ -48,7 +48,6 @@ class RuuviTag : public Component, public esp32_ble_tracker::ESPBTDeviceListener
   }
 
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
   void set_humidity(sensor::Sensor *humidity) { humidity_ = humidity; }
   void set_temperature(sensor::Sensor *temperature) { temperature_ = temperature; }
   void set_pressure(sensor::Sensor *pressure) { pressure_ = pressure; }

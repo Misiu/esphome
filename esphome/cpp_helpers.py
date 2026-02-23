@@ -1,82 +1,127 @@
-from esphome.const import CONF_INVERTED, CONF_MODE, CONF_NUMBER, CONF_SETUP_PRIORITY, \
-    CONF_UPDATE_INTERVAL, CONF_TYPE_ID
-# pylint: disable=unused-import
-from esphome.core import coroutine, ID, CORE, ConfigType
-from esphome.cpp_generator import RawExpression, add, get_variable
-from esphome.cpp_types import App, GPIOPin
+import logging
+
+from esphome.const import (
+    CONF_SAFE_MODE,
+    CONF_SETUP_PRIORITY,
+    CONF_TYPE_ID,
+    CONF_UPDATE_INTERVAL,
+    KEY_PAST_SAFE_MODE,
+)
+from esphome.core import CORE, ID, coroutine
+from esphome.coroutine import FakeAwaitable
+from esphome.cpp_generator import LogStringLiteral, add, add_define, get_variable
+from esphome.cpp_types import App
+from esphome.types import ConfigFragmentType, ConfigType
 from esphome.util import Registry, RegistryEntry
 
+_LOGGER = logging.getLogger(__name__)
 
-@coroutine
-def gpio_pin_expression(conf):
+
+async def gpio_pin_expression(conf):
     """Generate an expression for the given pin option.
 
-    This is a coroutine, you must await it with a 'yield' expression!
+    This is a coroutine, you must await it with a 'await' expression!
     """
     if conf is None:
-        return
+        return None
     from esphome import pins
-    for key, (func, _) in pins.PIN_SCHEMA_REGISTRY.items():
+
+    for key, (func, _, _) in pins.PIN_SCHEMA_REGISTRY.items():
         if key in conf:
-            yield coroutine(func)(conf)
-            return
-
-    number = conf[CONF_NUMBER]
-    mode = conf[CONF_MODE]
-    inverted = conf.get(CONF_INVERTED)
-    yield GPIOPin.new(number, RawExpression(mode), inverted)
+            return await coroutine(func)(conf)
+    return await coroutine(pins.PIN_SCHEMA_REGISTRY[CORE.target_platform][0])(conf)
 
 
-@coroutine
-def register_component(var, config):
+async def register_component(var, config):
     """Register the given obj as a component.
 
-    This is a coroutine, you must await it with a 'yield' expression!
+    This is a coroutine, you must await it with a 'await' expression!
 
     :param var: The variable representing the component.
     :param config: The configuration for the component.
     """
+    import inspect
+
     id_ = str(var.base)
     if id_ not in CORE.component_ids:
-        raise ValueError("Component ID {} was not declared to inherit from Component, "
-                         "or was registered twice. Please create a bug report with your "
-                         "configuration.".format(id_))
+        raise ValueError(
+            f"Component ID {id_} was not declared to inherit from Component, or was registered twice. Please create a bug report with your configuration."
+        )
     CORE.component_ids.remove(id_)
     if CONF_SETUP_PRIORITY in config:
+        add_define("USE_SETUP_PRIORITY_OVERRIDE")
         add(var.set_setup_priority(config[CONF_SETUP_PRIORITY]))
     if CONF_UPDATE_INTERVAL in config:
         add(var.set_update_interval(config[CONF_UPDATE_INTERVAL]))
+
+    # Set component source by inspecting the stack and getting the callee module
+    # https://stackoverflow.com/a/1095621
+    name = None
+    try:
+        for frm in inspect.stack()[1:]:
+            mod = inspect.getmodule(frm[0])
+            if mod is None:
+                continue
+            name = mod.__name__
+            if name.startswith("esphome.components."):
+                name = name[len("esphome.components.") :]
+                break
+            if name == "esphome.automation":
+                name = "automation"
+                # continue looking further up in stack in case we find a better one
+            if name == "esphome.coroutine":
+                # Only works for async-await coroutine syntax
+                break
+    except (KeyError, AttributeError, IndexError) as e:
+        _LOGGER.warning(
+            "Error while finding name of component, please report this", exc_info=e
+        )
+    if name is not None:
+        add(var.set_component_source(LogStringLiteral(name)))
+
     add(App.register_component(var))
-    yield var
+    return var
 
 
-@coroutine
-def register_parented(var, value):
+async def register_parented(var, value):
     if isinstance(value, ID):
-        paren = yield get_variable(value)
+        paren = await get_variable(value)
     else:
         paren = value
     add(var.set_parent(paren))
 
 
-def extract_registry_entry_config(registry, full_config):
-    # type: (Registry, ConfigType) -> RegistryEntry
+def extract_registry_entry_config(
+    registry: Registry,
+    full_config: ConfigType,
+) -> tuple[RegistryEntry, ConfigFragmentType]:
     key, config = next((k, v) for k, v in full_config.items() if k in registry)
     return registry[key], config
 
 
-@coroutine
-def build_registry_entry(registry, full_config):
+async def build_registry_entry(registry, full_config):
     registry_entry, config = extract_registry_entry_config(registry, full_config)
     type_id = full_config[CONF_TYPE_ID]
     builder = registry_entry.coroutine_fun
-    yield builder(config, type_id)
+    return await builder(config, type_id)
 
 
-@coroutine
-def build_registry_list(registry, config):
+async def build_registry_list(registry, config):
     actions = []
     for conf in config:
-        action = yield build_registry_entry(registry, conf)
+        action = await build_registry_entry(registry, conf)
         actions.append(action)
-    yield actions
+    return actions
+
+
+async def past_safe_mode():
+    if CONF_SAFE_MODE not in CORE.config:
+        return None
+
+    def _safe_mode_generator():
+        while True:
+            if CORE.data.get(CONF_SAFE_MODE, {}).get(KEY_PAST_SAFE_MODE, False):
+                return
+            yield
+
+    return await FakeAwaitable(_safe_mode_generator())

@@ -1,20 +1,21 @@
 #include "max7219.h"
-#include "esphome/core/log.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/log.h"
 
-namespace esphome {
-namespace max7219 {
+namespace esphome::max7219 {
 
-static const char *TAG = "max7219";
+static const char *const TAG = "max7219";
 
 static const uint8_t MAX7219_REGISTER_NOOP = 0x00;
 static const uint8_t MAX7219_REGISTER_DECODE_MODE = 0x09;
 static const uint8_t MAX7219_REGISTER_INTENSITY = 0x0A;
 static const uint8_t MAX7219_REGISTER_SCAN_LIMIT = 0x0B;
 static const uint8_t MAX7219_REGISTER_SHUTDOWN = 0x0C;
+static const uint8_t MAX7219_REGISTER_TEST = 0x0F;
 static const uint8_t MAX7219_UNKNOWN_CHAR = 0b11111111;
 
-const uint8_t MAX7219_ASCII_TO_RAW[95] PROGMEM = {
+constexpr uint8_t MAX7219_ASCII_TO_RAW[95] PROGMEM = {
     0b00000000,            // ' ', ord 0x20
     0b10110000,            // '!', ord 0x21
     0b00100010,            // '"', ord 0x22
@@ -40,11 +41,11 @@ const uint8_t MAX7219_ASCII_TO_RAW[95] PROGMEM = {
     0b01011111,            // '6', ord 0x36
     0b01110000,            // '7', ord 0x37
     0b01111111,            // '8', ord 0x38
-    0b01110011,            // '9', ord 0x39
+    0b01111011,            // '9', ord 0x39
     0b01001000,            // ':', ord 0x3A
     0b01011000,            // ';', ord 0x3B
     MAX7219_UNKNOWN_CHAR,  // '<', ord 0x3C
-    MAX7219_UNKNOWN_CHAR,  // '=', ord 0x3D
+    0b00001001,            // '=', ord 0x3D
     MAX7219_UNKNOWN_CHAR,  // '>', ord 0x3E
     0b01100101,            // '?', ord 0x3F
     0b01101111,            // '@', ord 0x40
@@ -113,13 +114,14 @@ const uint8_t MAX7219_ASCII_TO_RAW[95] PROGMEM = {
 };
 
 float MAX7219Component::get_setup_priority() const { return setup_priority::PROCESSOR; }
-void MAX7219Component::setup() {
-  ESP_LOGCONFIG(TAG, "Setting up MAX7219...");
-  this->spi_setup();
-  this->buffer_ = new uint8_t[this->num_chips_ * 8];
-  for (uint8_t i = 0; i < this->num_chips_ * 8; i++)
-    this->buffer_[i] = 0;
 
+MAX7219Component::MAX7219Component(uint8_t num_chips) : num_chips_(num_chips) {
+  this->buffer_ = new uint8_t[this->num_chips_ * 8];  // NOLINT
+  memset(this->buffer_, 0, this->num_chips_ * 8);
+}
+
+void MAX7219Component::setup() {
+  this->spi_setup();
   // let's assume the user has all 8 digits connected, only important in daisy chained setups anyway
   this->send_to_all_(MAX7219_REGISTER_SCAN_LIMIT, 7);
   // let's use our own ASCII -> led pattern encoding
@@ -127,12 +129,15 @@ void MAX7219Component::setup() {
   this->send_to_all_(MAX7219_REGISTER_INTENSITY, this->intensity_);
   this->display();
   // power up
+  this->send_to_all_(MAX7219_REGISTER_TEST, 0);
   this->send_to_all_(MAX7219_REGISTER_SHUTDOWN, 1);
 }
 void MAX7219Component::dump_config() {
-  ESP_LOGCONFIG(TAG, "MAX7219:");
-  ESP_LOGCONFIG(TAG, "  Number of Chips: %u", this->num_chips_);
-  ESP_LOGCONFIG(TAG, "  Intensity: %u", this->intensity_);
+  ESP_LOGCONFIG(TAG,
+                "MAX7219:\n"
+                "  Number of Chips: %u\n"
+                "  Intensity: %u",
+                this->num_chips_, this->intensity_);
   LOG_PIN("  CS Pin: ", this->cs_);
   LOG_UPDATE_INTERVAL(this);
 }
@@ -141,7 +146,11 @@ void MAX7219Component::display() {
   for (uint8_t i = 0; i < 8; i++) {
     this->enable();
     for (uint8_t j = 0; j < this->num_chips_; j++) {
-      this->send_byte_(8 - i, this->buffer_[j * 8 + i]);
+      if (reverse_) {
+        this->send_byte_(8 - i, buffer_[(num_chips_ - j - 1) * 8 + i]);
+      } else {
+        this->send_byte_(8 - i, buffer_[j * 8 + i]);
+      }
     }
     this->disable();
   }
@@ -157,6 +166,10 @@ void MAX7219Component::send_to_all_(uint8_t a_register, uint8_t data) {
   this->disable();
 }
 void MAX7219Component::update() {
+  if (this->intensity_changed_) {
+    this->send_to_all_(MAX7219_REGISTER_INTENSITY, this->intensity_);
+    this->intensity_changed_ = false;
+  }
   for (uint8_t i = 0; i < this->num_chips_ * 8; i++)
     this->buffer_[i] = 0;
   if (this->writer_.has_value())
@@ -168,7 +181,7 @@ uint8_t MAX7219Component::print(uint8_t start_pos, const char *str) {
   for (; *str != '\0'; str++) {
     uint8_t data = MAX7219_UNKNOWN_CHAR;
     if (*str >= ' ' && *str <= '~')
-      data = pgm_read_byte(&MAX7219_ASCII_TO_RAW[*str - ' ']);
+      data = progmem_read_byte(&MAX7219_ASCII_TO_RAW[*str - ' ']);
 
     if (data == MAX7219_UNKNOWN_CHAR) {
       ESP_LOGW(TAG, "Encountered character '%c' with no MAX7219 representation while translating string!", *str);
@@ -210,19 +223,21 @@ uint8_t MAX7219Component::printf(const char *format, ...) {
   return 0;
 }
 void MAX7219Component::set_writer(max7219_writer_t &&writer) { this->writer_ = writer; }
-void MAX7219Component::set_intensity(uint8_t intensity) { this->intensity_ = intensity; }
-void MAX7219Component::set_num_chips(uint8_t num_chips) { this->num_chips_ = num_chips; }
+void MAX7219Component::set_intensity(uint8_t intensity) {
+  intensity &= 0xF;
+  if (intensity != this->intensity_) {
+    this->intensity_changed_ = true;
+    this->intensity_ = intensity;
+  }
+}
 
-#ifdef USE_TIME
-uint8_t MAX7219Component::strftime(uint8_t pos, const char *format, time::ESPTime time) {
+uint8_t MAX7219Component::strftime(uint8_t pos, const char *format, ESPTime time) {
   char buffer[64];
   size_t ret = time.strftime(buffer, sizeof(buffer), format);
   if (ret > 0)
     return this->print(pos, buffer);
   return 0;
 }
-uint8_t MAX7219Component::strftime(const char *format, time::ESPTime time) { return this->strftime(0, format, time); }
-#endif
+uint8_t MAX7219Component::strftime(const char *format, ESPTime time) { return this->strftime(0, format, time); }
 
-}  // namespace max7219
-}  // namespace esphome
+}  // namespace esphome::max7219

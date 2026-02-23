@@ -1,28 +1,36 @@
 #include "homeassistant_sensor.h"
-#include "esphome/core/log.h"
 #include "esphome/components/api/api_server.h"
+#include "esphome/core/log.h"
+#include "esphome/core/string_ref.h"
 
 namespace esphome {
 namespace homeassistant {
 
-static const char *TAG = "homeassistant.sensor";
+static const char *const TAG = "homeassistant.sensor";
 
 void HomeassistantSensor::setup() {
-  api::global_api_server->subscribe_home_assistant_state(this->entity_id_, [this](std::string state) {
-    auto val = parse_float(state);
+  api::global_api_server->subscribe_home_assistant_state(this->entity_id_, this->attribute_, [this](StringRef state) {
+    auto val = parse_number<float>(state.c_str());
     if (!val.has_value()) {
-      ESP_LOGW(TAG, "Can't convert '%s' to number!", state.c_str());
+      ESP_LOGW(TAG, "'%s': Can't convert '%s' to number!", this->entity_id_, state.c_str());
       this->publish_state(NAN);
       return;
     }
 
-    ESP_LOGD(TAG, "'%s': Got state %.2f", this->entity_id_.c_str(), *val);
+    if (this->attribute_ != nullptr) {
+      ESP_LOGD(TAG, "'%s::%s': Got attribute state %.2f", this->entity_id_, this->attribute_, *val);
+    } else {
+      ESP_LOGD(TAG, "'%s': Got state %.2f", this->entity_id_, *val);
+    }
     this->publish_state(*val);
   });
 }
 void HomeassistantSensor::dump_config() {
   LOG_SENSOR("", "Homeassistant Sensor", this);
-  ESP_LOGCONFIG(TAG, "  Entity ID: '%s'", this->entity_id_.c_str());
+  ESP_LOGCONFIG(TAG, "  Entity ID: '%s'", this->entity_id_);
+  if (this->attribute_ != nullptr) {
+    ESP_LOGCONFIG(TAG, "  Attribute: '%s'", this->attribute_);
+  }
 }
 float HomeassistantSensor::get_setup_priority() const { return setup_priority::AFTER_CONNECTION; }
 

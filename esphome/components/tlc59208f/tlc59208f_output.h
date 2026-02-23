@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/helpers.h"
 #include "esphome/components/output/float_output.h"
 #include "esphome/components/i2c/i2c.h"
 
@@ -8,27 +9,28 @@ namespace esphome {
 namespace tlc59208f {
 
 // 0*: Group dimming, 1: Group blinking
-extern const uint8_t TLC59208F_MODE2_DMBLNK;
+inline constexpr uint8_t TLC59208F_MODE2_DMBLNK = (1 << 5);
 // 0*: Output change on Stop command, 1: Output change on ACK
-extern const uint8_t TLC59208F_MODE2_OCH;
+inline constexpr uint8_t TLC59208F_MODE2_OCH = (1 << 3);
 // 0*: WDT disabled, 1: WDT enabled
-extern const uint8_t TLC59208F_MODE2_WDTEN;
+inline constexpr uint8_t TLC59208F_MODE2_WDTEN = (1 << 2);
 // WDT timeouts
-extern const uint8_t TLC59208F_MODE2_WDT_5MS;
-extern const uint8_t TLC59208F_MODE2_WDT_15MS;
-extern const uint8_t TLC59208F_MODE2_WDT_25MS;
-extern const uint8_t TLC59208F_MODE2_WDT_35MS;
+inline constexpr uint8_t TLC59208F_MODE2_WDT_5MS = (0 << 0);
+inline constexpr uint8_t TLC59208F_MODE2_WDT_15MS = (1 << 0);
+inline constexpr uint8_t TLC59208F_MODE2_WDT_25MS = (2 << 0);
+inline constexpr uint8_t TLC59208F_MODE2_WDT_35MS = (3 << 0);
 
 class TLC59208FOutput;
 
-class TLC59208FChannel : public output::FloatOutput {
+class TLC59208FChannel : public output::FloatOutput, public Parented<TLC59208FOutput> {
  public:
-  TLC59208FChannel(TLC59208FOutput *parent, uint8_t channel) : parent_(parent), channel_(channel) {}
+  void set_channel(uint8_t channel) { channel_ = channel; }
 
  protected:
+  friend class TLC59208FOutput;
+
   void write_state(float state) override;
 
-  TLC59208FOutput *parent_;
   uint8_t channel_;
 };
 
@@ -37,7 +39,7 @@ class TLC59208FOutput : public Component, public i2c::I2CDevice {
  public:
   TLC59208FOutput(uint8_t mode = TLC59208F_MODE2_OCH) : mode_(mode) {}
 
-  TLC59208FChannel *create_channel(uint8_t channel);
+  void register_channel(TLC59208FChannel *channel);
 
   void setup() override;
   void dump_config() override;
