@@ -419,7 +419,6 @@ uint64_t GPIOOneWireBus::search_int() {
   return address;
 }
 
-}  // namespace gpio
-}  // namespace esphome
+}  // namespace esphome::gpio
 
 #endif  // defined(USE_ESP32) && SOC_RMT_SUPPORTED
