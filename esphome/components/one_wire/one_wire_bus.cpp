@@ -1,8 +1,7 @@
 #include "one_wire_bus.h"
 #include "esphome/core/helpers.h"
 
-namespace esphome {
-namespace one_wire {
+namespace esphome::one_wire {
 
 static const char *const TAG = "one_wire";
 
@@ -12,8 +11,8 @@ static const uint8_t DALLAS_MODEL_DS18B20 = 0x28;
 static const uint8_t DALLAS_MODEL_DS1825 = 0x3B;
 static const uint8_t DALLAS_MODEL_DS28EA00 = 0x42;
 
-const uint8_t ONE_WIRE_ROM_SELECT = 0x55;
-const uint8_t ONE_WIRE_ROM_SEARCH = 0xF0;
+static const uint8_t ONE_WIRE_ROM_SELECT = 0x55;
+static const uint8_t ONE_WIRE_ROM_SEARCH = 0xF0;
 
 const std::vector<uint64_t> &OneWireBus::get_devices() { return this->devices_; }
 
@@ -90,5 +89,4 @@ void OneWireBus::dump_devices_(const char *tag) {
   }
 }
 
-}  // namespace one_wire
-}  // namespace esphome
+}  // namespace esphome::one_wire

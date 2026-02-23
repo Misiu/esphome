@@ -14,8 +14,7 @@
 #endif  // SOC_RMT_SUPPORTED
 #endif  // USE_ESP32
 
-namespace esphome {
-namespace gpio {
+namespace esphome::gpio {
 
 class GPIOOneWireBus : public one_wire::OneWireBus, public Component {
  public:
@@ -70,5 +69,4 @@ class GPIOOneWireBus : public one_wire::OneWireBus, public Component {
 #endif
 };
 
-}  // namespace gpio
-}  // namespace esphome
+}  // namespace esphome::gpio
