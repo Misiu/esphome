@@ -7,6 +7,7 @@ Covers:
 - Config validates correctly for each platform
 - Two buses on the same ESP32: independent instantiation, registration, pins, and RMT driver
 - Two buses on the same ESP8266: independent instantiation and registration (GPIO bit-bang)
+- FILTER_SOURCE_FILES: gpio_one_wire_rmt.cpp included only for ESP32, excluded for ESP8266
 
 Two-bus isolation rationale
 ---------------------------
@@ -314,4 +315,65 @@ def test_two_buses_esp8266_have_independent_pins(
     assert len(pin_lines) == 2
     assert pin_lines[0] != pin_lines[1], (
         "bus1 and bus2 must receive distinct pin objects"
+    )
+
+
+# ---------------------------------------------------------------------------
+# FILTER_SOURCE_FILES tests
+# ---------------------------------------------------------------------------
+
+
+def test_filter_source_files_rmt_included_for_esp32(
+    generate_main: Callable[[str | Path], str],
+) -> None:
+    """ESP32 IDF: gpio_one_wire_rmt.cpp must NOT be excluded (i.e. it is compiled).
+
+    FILTER_SOURCE_FILES lists gpio_one_wire_rmt.cpp for ESP32_IDF and
+    ESP32_ARDUINO only.  For ESP32 IDF the file must remain in the build.
+    """
+    generate_main(HERE / "test_gpio_one_wire_esp32_idf.yaml")
+
+    from esphome.components.gpio.one_wire import FILTER_SOURCE_FILES
+
+    excluded = FILTER_SOURCE_FILES()
+    assert "gpio_one_wire_rmt.cpp" not in excluded, (
+        "gpio_one_wire_rmt.cpp must be compiled (not excluded) on ESP32 IDF"
+    )
+
+
+def test_filter_source_files_rmt_excluded_for_esp8266(
+    generate_main: Callable[[str | Path], str],
+) -> None:
+    """ESP8266: gpio_one_wire_rmt.cpp must be excluded (not compiled).
+
+    gpio_one_wire_rmt.cpp contains RMT-specific code that only compiles on
+    ESP32.  FILTER_SOURCE_FILES must exclude it for non-ESP32 platforms so
+    the build system never attempts to compile it.
+    """
+    generate_main(HERE / "test_gpio_one_wire_esp8266.yaml")
+
+    from esphome.components.gpio.one_wire import FILTER_SOURCE_FILES
+
+    excluded = FILTER_SOURCE_FILES()
+    assert "gpio_one_wire_rmt.cpp" in excluded, (
+        "gpio_one_wire_rmt.cpp must be excluded on ESP8266 (no RMT hardware)"
+    )
+
+
+def test_filter_source_files_gpio_never_excluded(
+    generate_main: Callable[[str | Path], str],
+) -> None:
+    """ESP8266: gpio_one_wire.cpp (GPIO bit-bang) must never be excluded.
+
+    gpio_one_wire.cpp contains the GPIO bit-bang fallback which is needed on
+    all platforms.  FILTER_SOURCE_FILES must keep it in the build for every
+    supported platform.
+    """
+    generate_main(HERE / "test_gpio_one_wire_esp8266.yaml")
+
+    from esphome.components.gpio.one_wire import FILTER_SOURCE_FILES
+
+    excluded = FILTER_SOURCE_FILES()
+    assert "gpio_one_wire.cpp" not in excluded, (
+        "gpio_one_wire.cpp (GPIO bit-bang) must always be compiled"
     )

@@ -1,8 +1,9 @@
 from esphome import pins
 import esphome.codegen as cg
 from esphome.components.one_wire import OneWireBus
+from esphome.config_helpers import filter_source_files_from_platform
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_PIN
+from esphome.const import CONF_ID, CONF_PIN, PlatformFramework
 from esphome.core import CORE
 
 from .. import gpio_ns
@@ -38,3 +39,22 @@ async def to_code(config):
         if get_esp32_variant() not in esp32_rmt.VARIANTS_NO_RMT:
             # Re-enable ESP-IDF's RMT driver (excluded by default to save compile time)
             include_builtin_idf_component("esp_driver_rmt")
+
+
+FILTER_SOURCE_FILES = filter_source_files_from_platform(
+    {
+        "gpio_one_wire_rmt.cpp": {
+            PlatformFramework.ESP32_ARDUINO,
+            PlatformFramework.ESP32_IDF,
+        },
+        "gpio_one_wire.cpp": {
+            PlatformFramework.ESP32_ARDUINO,
+            PlatformFramework.ESP32_IDF,
+            PlatformFramework.ESP8266_ARDUINO,
+            PlatformFramework.BK72XX_ARDUINO,
+            PlatformFramework.RTL87XX_ARDUINO,
+            PlatformFramework.LN882X_ARDUINO,
+            PlatformFramework.RP2040_ARDUINO,
+        },
+    }
+)
