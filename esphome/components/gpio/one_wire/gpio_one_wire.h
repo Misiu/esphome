@@ -36,9 +36,16 @@ class GPIOOneWireBus : public one_wire::OneWireBus, public Component {
   uint64_t read64() override;
 
  protected:
-  InternalGPIOPin *t_pin_{nullptr};
+  // Stored as a plain pointer, not initialised here, because ESPHome's code
+  // generator always calls set_pin() before setup() — the same convention
+  // used by pulse_counter (InternalGPIOPin *pin_) and every other component
+  // that receives a mandatory pin via a setter.
+  InternalGPIOPin *t_pin_;
 
-  // ROM search state (shared by both implementations)
+  // ROM search state (shared by both RMT and bit-bang implementations).
+  // Upstream gpio_one_wire initialises last_discrepancy_ and last_device_flag_
+  // but leaves address_ without a default.  All three fields are reset
+  // together in reset_search(), so they are initialised consistently here.
   uint8_t last_discrepancy_{0};
   bool last_device_flag_{false};
   uint64_t address_{0};
