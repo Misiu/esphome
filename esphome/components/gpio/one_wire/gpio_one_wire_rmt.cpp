@@ -19,16 +19,6 @@ static const char *const TAG = "gpio.one_wire";
 // 1 MHz resolution → 1 tick = 1 µs.  All timing constants below are in µs.
 static const uint32_t RMT_RESOLUTION_HZ = 1000000;
 
-// For ESP32 / ESP32-S2 the RX channel has no ping-pong capability, so the
-// hardware memory block must hold every symbol of the largest single receive
-// operation (read64 = 64 symbols).  All other ESP32 variants support
-// ping-pong and a single 48-symbol block is sufficient.
-#if CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2
-static const size_t RX_MEM_BLOCK_SYMBOLS = 64;
-#else
-static const size_t RX_MEM_BLOCK_SYMBOLS = 48;
-#endif
-
 // Maximum number of RMT symbols we ever need to receive in one transaction.
 // read64() is the largest user at 8 bytes × 8 bits = 64 symbols.
 static const size_t MAX_RX_SYMBOLS = 64;
@@ -170,7 +160,7 @@ void GPIOOneWireBus::setup() {
   rx_cfg.clk_src = RMT_CLK_SRC_DEFAULT;
   rx_cfg.resolution_hz = RMT_RESOLUTION_HZ;
   rx_cfg.gpio_num = gpio_num;
-  rx_cfg.mem_block_symbols = RX_MEM_BLOCK_SYMBOLS;
+  rx_cfg.mem_block_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL;
   if (rmt_new_rx_channel(&rx_cfg, &this->rx_channel_) != ESP_OK) {
     ESP_LOGE(TAG, "Failed to create RX channel on GPIO %d", gpio_num);
     this->destroy_();
@@ -191,7 +181,7 @@ void GPIOOneWireBus::setup() {
   tx_cfg.clk_src = RMT_CLK_SRC_DEFAULT;
   tx_cfg.resolution_hz = RMT_RESOLUTION_HZ;
   tx_cfg.gpio_num = gpio_num;
-  tx_cfg.mem_block_symbols = 64;
+  tx_cfg.mem_block_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL;
   tx_cfg.trans_queue_depth = 4;
   tx_cfg.flags.io_loop_back = true;  // TX output feeds back into RX input
   tx_cfg.flags.io_od_mode = true;    // Open-drain required for 1-wire
