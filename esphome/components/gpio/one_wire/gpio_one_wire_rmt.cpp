@@ -7,8 +7,7 @@
 #include <cstring>
 #include <driver/gpio.h>
 
-namespace esphome {
-namespace gpio {
+namespace esphome::gpio {
 
 static const char *const TAG = "gpio.one_wire";
 
