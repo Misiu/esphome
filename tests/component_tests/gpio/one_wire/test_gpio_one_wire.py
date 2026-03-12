@@ -169,11 +169,11 @@ def test_two_buses_esp32_registered_independently(
     """
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32_two_buses.yaml")
 
-    assert "App.register_component(ow_bus1);" in main_cpp
-    assert "App.register_component(ow_bus2);" in main_cpp
+    assert "App.register_component_(ow_bus1);" in main_cpp
+    assert "App.register_component_(ow_bus2);" in main_cpp
 
     # Count occurrences: exactly two register_component calls for the two buses
-    assert main_cpp.count("App.register_component(ow_bus") == 2
+    assert main_cpp.count("App.register_component_(ow_bus") == 2
 
 
 def test_two_buses_esp32_have_independent_pins(
