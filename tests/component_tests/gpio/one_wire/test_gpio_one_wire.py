@@ -238,10 +238,10 @@ def test_two_buses_esp32_generated_code_order(
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32_two_buses.yaml")
 
     pos_bus1_new = main_cpp.index("ow_bus1 = new gpio::GPIOOneWireBus();")
-    pos_bus1_reg = main_cpp.index("App.register_component(ow_bus1);")
+    pos_bus1_reg = main_cpp.index("App.register_component_(ow_bus1);")
     pos_bus1_pin = main_cpp.index("ow_bus1->set_pin(")
     pos_bus2_new = main_cpp.index("ow_bus2 = new gpio::GPIOOneWireBus();")
-    pos_bus2_reg = main_cpp.index("App.register_component(ow_bus2);")
+    pos_bus2_reg = main_cpp.index("App.register_component_(ow_bus2);")
     pos_bus2_pin = main_cpp.index("ow_bus2->set_pin(")
 
     # Bus1's entire setup block is before bus2's
@@ -292,9 +292,9 @@ def test_two_buses_esp8266_registered_independently(
     """ESP8266: Both buses must be registered as separate ESPHome components."""
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp8266_two_buses.yaml")
 
-    assert "App.register_component(ow_bus1);" in main_cpp
-    assert "App.register_component(ow_bus2);" in main_cpp
-    assert main_cpp.count("App.register_component(ow_bus") == 2
+    assert "App.register_component_(ow_bus1);" in main_cpp
+    assert "App.register_component_(ow_bus2);" in main_cpp
+    assert main_cpp.count("App.register_component_(ow_bus") == 2
 
 
 def test_two_buses_esp8266_have_independent_pins(
