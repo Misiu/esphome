@@ -49,8 +49,8 @@ def test_gpio_one_wire_esp32_idf_registers_bus(
     """ESP32 IDF: GPIOOneWireBus must be instantiated and registered as a component."""
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32_idf.yaml")
 
-    assert "new gpio::GPIOOneWireBus();" in main_cpp
-    assert 'set_component_source(LOG_STR("gpio.one_wire"))' in main_cpp
+    assert "new(ow_bus) gpio::GPIOOneWireBus();" in main_cpp
+    assert "App.register_component_(ow_bus);" in main_cpp
 
 
 def test_gpio_one_wire_esp32_idf_includes_rmt_driver(
@@ -104,7 +104,7 @@ def test_gpio_one_wire_esp32c2_config_valid(
     """
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32c2_idf.yaml")
 
-    assert "new gpio::GPIOOneWireBus();" in main_cpp
+    assert "new(ow_bus) gpio::GPIOOneWireBus();" in main_cpp
 
 
 def test_gpio_one_wire_esp8266_registers_bus(
@@ -113,8 +113,8 @@ def test_gpio_one_wire_esp8266_registers_bus(
     """ESP8266: GPIOOneWireBus must be instantiated using the GPIO bit-bang path."""
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp8266.yaml")
 
-    assert "new gpio::GPIOOneWireBus();" in main_cpp
-    assert 'set_component_source(LOG_STR("gpio.one_wire"))' in main_cpp
+    assert "new(ow_bus) gpio::GPIOOneWireBus();" in main_cpp
+    assert "App.register_component_(ow_bus);" in main_cpp
 
 
 def test_gpio_one_wire_esp8266_no_rmt_data(
@@ -147,8 +147,8 @@ def test_two_buses_esp32_both_instantiated(
     """
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32_two_buses.yaml")
 
-    assert "ow_bus1 = new gpio::GPIOOneWireBus();" in main_cpp
-    assert "ow_bus2 = new gpio::GPIOOneWireBus();" in main_cpp
+    assert "new(ow_bus1) gpio::GPIOOneWireBus();" in main_cpp
+    assert "new(ow_bus2) gpio::GPIOOneWireBus();" in main_cpp
 
 
 def test_two_buses_esp32_registered_independently(
@@ -237,10 +237,10 @@ def test_two_buses_esp32_generated_code_order(
     """
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32_two_buses.yaml")
 
-    pos_bus1_new = main_cpp.index("ow_bus1 = new gpio::GPIOOneWireBus();")
+    pos_bus1_new = main_cpp.index("new(ow_bus1) gpio::GPIOOneWireBus();")
     pos_bus1_reg = main_cpp.index("App.register_component_(ow_bus1);")
     pos_bus1_pin = main_cpp.index("ow_bus1->set_pin(")
-    pos_bus2_new = main_cpp.index("ow_bus2 = new gpio::GPIOOneWireBus();")
+    pos_bus2_new = main_cpp.index("new(ow_bus2) gpio::GPIOOneWireBus();")
     pos_bus2_reg = main_cpp.index("App.register_component_(ow_bus2);")
     pos_bus2_pin = main_cpp.index("ow_bus2->set_pin(")
 
@@ -282,8 +282,8 @@ def test_two_buses_esp8266_both_instantiated(
     """ESP8266: Both GPIO bit-bang buses must be instantiated independently."""
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp8266_two_buses.yaml")
 
-    assert "ow_bus1 = new gpio::GPIOOneWireBus();" in main_cpp
-    assert "ow_bus2 = new gpio::GPIOOneWireBus();" in main_cpp
+    assert "new(ow_bus1) gpio::GPIOOneWireBus();" in main_cpp
+    assert "new(ow_bus2) gpio::GPIOOneWireBus();" in main_cpp
 
 
 def test_two_buses_esp8266_registered_independently(
