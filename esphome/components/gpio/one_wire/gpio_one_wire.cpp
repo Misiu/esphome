@@ -11,7 +11,7 @@ static const char *const TAG = "gpio.one_wire";
 // ---------------------------------------------------------------------------
 
 void GPIOOneWireBus::dump_config() {
-#if defined(USE_ESP32) && SOC_RMT_SUPPORTED
+#ifdef USE_ONE_WIRE_RMT
   ESP_LOGCONFIG(TAG, "GPIO 1-wire bus (RMT):");
 #else
   ESP_LOGCONFIG(TAG, "GPIO 1-wire bus:");
@@ -30,7 +30,7 @@ void GPIOOneWireBus::reset_search() {
 // GPIO bit-bang implementation (all other platforms, or ESP32 without RMT)
 // ===========================================================================
 
-#if !(defined(USE_ESP32) && SOC_RMT_SUPPORTED)
+#ifndef USE_ONE_WIRE_RMT
 
 // ---------------------------------------------------------------------------
 // setup() — GPIO path
@@ -38,11 +38,6 @@ void GPIOOneWireBus::reset_search() {
 void GPIOOneWireBus::setup() {
   this->t_pin_->setup();
   this->t_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
-#if defined(USE_ESP32)
-  // ESP32 variant without RMT hardware support: log a warning and fall back
-  // to GPIO bit-banging.
-  ESP_LOGW(TAG, "RMT not supported on this ESP32 variant, using GPIO bit-banging");
-#endif
   // clear bus with 480µs high, otherwise initial reset in search might fail
   this->pin_.digital_write(true);
   this->pin_.pin_mode(gpio::FLAG_OUTPUT);
@@ -235,6 +230,6 @@ uint64_t IRAM_ATTR GPIOOneWireBus::search_int() {
   return address;
 }
 
-#endif  // !(defined(USE_ESP32) && SOC_RMT_SUPPORTED)
+#endif  // !USE_ONE_WIRE_RMT
 
 }  // namespace esphome::gpio

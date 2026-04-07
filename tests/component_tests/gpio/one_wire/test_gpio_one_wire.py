@@ -1,10 +1,13 @@
 """Tests for the GPIO 1-wire bus component.
 
 Covers:
-- ESP32 with RMT hardware: esp_driver_rmt IDF component must be included
+- ESP32 default (no use_rmt): GPIO bit-bang path is used (esp_driver_rmt stays excluded)
+- ESP32 with use_rmt: true: esp_driver_rmt IDF component must be included
 - ESP32-C2 (no RMT hardware): esp_driver_rmt must stay excluded
 - Non-ESP32 (ESP8266): no esp32 config data; GPIO bit-bang path used
 - Config validates correctly for each platform
+- use_rmt: false on ESP32 forces GPIO bit-bang (esp_driver_rmt stays excluded)
+- use_rmt: true on ESP8266 must raise a validation error
 - Two buses on the same ESP32: independent instantiation, registration, pins, and RMT driver
 - Two buses on the same ESP8266: independent instantiation and registration (GPIO bit-bang)
 - FILTER_SOURCE_FILES: gpio_one_wire_rmt.cpp included only for ESP32, excluded for ESP8266
@@ -35,6 +38,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 HERE = Path(__file__).parent
 
 
@@ -56,13 +61,13 @@ def test_gpio_one_wire_esp32_idf_registers_bus(
 def test_gpio_one_wire_esp32_idf_includes_rmt_driver(
     generate_main: Callable[[str | Path], str],
 ) -> None:
-    """ESP32 IDF: esp_driver_rmt must be removed from the exclusion list so it gets compiled.
+    """ESP32 IDF + use_rmt: true: esp_driver_rmt must be un-excluded and compiled.
 
-    SOC_RMT_SUPPORTED is true for all ESP32 variants except C2 and C61.  The
-    Python to_code() path calls include_builtin_idf_component("esp_driver_rmt")
-    for those variants, which removes it from KEY_EXCLUDE_COMPONENTS.
+    When explicitly enabled, to_code() calls
+    include_builtin_idf_component("esp_driver_rmt"), which removes the driver
+    from KEY_EXCLUDE_COMPONENTS.
     """
-    generate_main(HERE / "test_gpio_one_wire_esp32_idf.yaml")
+    generate_main(HERE / "test_gpio_one_wire_esp32_idf_use_rmt_true.yaml")
 
     # Check that the RMT driver was un-excluded (i.e. it will be compiled)
     from esphome.components.esp32 import KEY_ESP32, KEY_EXCLUDE_COMPONENTS
@@ -70,7 +75,22 @@ def test_gpio_one_wire_esp32_idf_includes_rmt_driver(
 
     excluded = CORE.data.get(KEY_ESP32, {}).get(KEY_EXCLUDE_COMPONENTS, set())
     assert "esp_driver_rmt" not in excluded, (
-        "esp_driver_rmt should be included (removed from exclusions) on ESP32 IDF with RMT support"
+        "esp_driver_rmt should be included when use_rmt: true is set"
+    )
+
+
+def test_gpio_one_wire_esp32_idf_default_excludes_rmt_driver(
+    generate_main: Callable[[str | Path], str],
+) -> None:
+    """ESP32 IDF default (no use_rmt): esp_driver_rmt must remain excluded."""
+    generate_main(HERE / "test_gpio_one_wire_esp32_idf.yaml")
+
+    from esphome.components.esp32 import KEY_ESP32, KEY_EXCLUDE_COMPONENTS
+    from esphome.core import CORE
+
+    excluded = CORE.data.get(KEY_ESP32, {}).get(KEY_EXCLUDE_COMPONENTS, set())
+    assert "esp_driver_rmt" in excluded, (
+        "esp_driver_rmt should remain excluded by default when use_rmt is omitted"
     )
 
 
@@ -377,3 +397,69 @@ def test_filter_source_files_gpio_never_excluded(
     assert "gpio_one_wire.cpp" not in excluded, (
         "gpio_one_wire.cpp (GPIO bit-bang) must always be compiled"
     )
+
+
+# ---------------------------------------------------------------------------
+# use_rmt config option tests
+# ---------------------------------------------------------------------------
+
+
+def test_use_rmt_false_on_esp32_keeps_rmt_driver_excluded(
+    generate_main: Callable[[str | Path], str],
+) -> None:
+    """ESP32 IDF with use_rmt: false must NOT include esp_driver_rmt.
+
+    When the user explicitly sets use_rmt: false, the GPIO bit-bang path is
+    used even on hardware that supports RMT.  The RMT driver must therefore
+    remain excluded so it doesn't consume compile time or flash.
+    """
+    generate_main(HERE / "test_gpio_one_wire_esp32_idf_use_rmt_false.yaml")
+
+    from esphome.components.esp32 import KEY_ESP32, KEY_EXCLUDE_COMPONENTS
+    from esphome.core import CORE
+
+    excluded = CORE.data.get(KEY_ESP32, {}).get(KEY_EXCLUDE_COMPONENTS, set())
+    assert "esp_driver_rmt" in excluded, (
+        "esp_driver_rmt should remain excluded when use_rmt: false is set"
+    )
+
+
+def test_use_rmt_false_on_esp32_defines_no_macro(
+    generate_main: Callable[[str | Path], str],
+) -> None:
+    """ESP32 IDF with use_rmt: false must not define USE_ONE_WIRE_RMT.
+
+    The USE_ONE_WIRE_RMT macro is what switches gpio_one_wire_rmt.cpp from
+    an empty file into the full RMT driver.  When use_rmt: false it must be
+    absent so the GPIO bit-bang code path compiles instead.
+    """
+    main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32_idf_use_rmt_false.yaml")
+
+    assert "USE_ONE_WIRE_RMT" not in main_cpp, (
+        "USE_ONE_WIRE_RMT must not be defined when use_rmt: false"
+    )
+
+
+def test_use_rmt_false_on_esp32_still_registers_bus(
+    generate_main: Callable[[str | Path], str],
+) -> None:
+    """ESP32 IDF with use_rmt: false still generates a valid bus component."""
+    main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32_idf_use_rmt_false.yaml")
+
+    assert "new(ow_bus) gpio::GPIOOneWireBus();" in main_cpp
+    assert "App.register_component_(ow_bus);" in main_cpp
+
+
+def test_use_rmt_true_on_esp8266_raises_error(
+    generate_main: Callable[[str | Path], str],
+) -> None:
+    """ESP8266 with use_rmt: true must raise a validation error.
+
+    RMT hardware is only available on ESP32.  Requesting use_rmt: true on any
+    other platform is a configuration mistake and must be caught at validation
+    time rather than producing broken firmware.
+    """
+    import esphome.config_validation as cv
+
+    with pytest.raises((cv.Invalid, Exception)):
+        generate_main(HERE / "test_gpio_one_wire_esp8266_use_rmt_true.yaml")

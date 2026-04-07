@@ -1,3 +1,5 @@
+import logging
+
 from esphome import pins
 import esphome.codegen as cg
 from esphome.components.one_wire import OneWireBus
@@ -8,7 +10,11 @@ from esphome.core import CORE
 
 from .. import gpio_ns
 
+_LOGGER = logging.getLogger(__name__)
+
 CODEOWNERS = ["@ssieb"]
+
+CONF_USE_RMT = "use_rmt"
 
 GPIOOneWireBus = gpio_ns.class_("GPIOOneWireBus", OneWireBus, cg.Component)
 
@@ -16,6 +22,7 @@ CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(GPIOOneWireBus),
         cv.Required(CONF_PIN): pins.internal_gpio_output_pin_schema,
+        cv.Optional(CONF_USE_RMT): cv.boolean,
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -27,6 +34,8 @@ async def to_code(config):
     pin = await cg.gpio_pin_expression(config[CONF_PIN])
     cg.add(var.set_pin(pin))
 
+    use_rmt = config.get(CONF_USE_RMT)
+
     if CORE.is_esp32:
         from esphome.components import esp32_rmt
         from esphome.components.esp32 import (
@@ -34,11 +43,25 @@ async def to_code(config):
             include_builtin_idf_component,
         )
 
-        # Include the RMT driver for all ESP32 variants that have RMT hardware.
-        # Variants without RMT (C2, C61) fall back to GPIO bit-banging at runtime.
-        if get_esp32_variant() not in esp32_rmt.VARIANTS_NO_RMT:
-            # Re-enable ESP-IDF's RMT driver (excluded by default to save compile time)
+        variant = get_esp32_variant()
+        hw_supports_rmt = variant not in esp32_rmt.VARIANTS_NO_RMT
+
+        # Default: use GPIO bit-bang unless user explicitly enables RMT.
+        if use_rmt is None:
+            use_rmt = False
+        elif use_rmt and not hw_supports_rmt:
+            raise cv.Invalid(
+                f"use_rmt: RMT is not supported on ESP32 variant {variant}"
+            )
+
+        if use_rmt:
+            _LOGGER.info("GPIO 1-wire: using RMT hardware driver")
             include_builtin_idf_component("esp_driver_rmt")
+            cg.add_define("USE_ONE_WIRE_RMT")
+        else:
+            _LOGGER.info("GPIO 1-wire: using GPIO bit-bang driver")
+    elif use_rmt:
+        raise cv.Invalid("use_rmt: RMT is only available on ESP32")
 
 
 FILTER_SOURCE_FILES = filter_source_files_from_platform(

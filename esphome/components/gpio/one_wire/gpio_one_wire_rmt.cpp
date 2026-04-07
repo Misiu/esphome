@@ -2,7 +2,7 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
-#if defined(USE_ESP32) && SOC_RMT_SUPPORTED
+#ifdef USE_ONE_WIRE_RMT
 
 #include <cstring>
 #include <driver/gpio.h>
@@ -117,27 +117,24 @@ void GPIOOneWireBus::setup() {
   bytes_enc_cfg.bit1 = make_symbol(SLOT_START, 0, SLOT_BIT + SLOT_RECOVERY, 1);
   bytes_enc_cfg.flags.msb_first = 0;
   if (rmt_new_bytes_encoder(&bytes_enc_cfg, &this->tx_bytes_encoder_) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to create bytes encoder");
     this->destroy_();
-    this->mark_failed();
+    this->mark_failed(LOG_STR("Failed to create bytes encoder"));
     return;
   }
 
   // Copy encoder — used for reset pulse and single-bit operations
   rmt_copy_encoder_config_t copy_enc_cfg = {};
   if (rmt_new_copy_encoder(&copy_enc_cfg, &this->tx_copy_encoder_) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to create copy encoder");
     this->destroy_();
-    this->mark_failed();
+    this->mark_failed(LOG_STR("Failed to create copy encoder"));
     return;
   }
 
   // Receive-done queue (depth 1 — we always drain before the next operation)
   this->receive_queue_ = xQueueCreate(1, sizeof(rmt_rx_done_event_data_t));
   if (this->receive_queue_ == nullptr) {
-    ESP_LOGE(TAG, "Failed to create receive queue");
     this->destroy_();
-    this->mark_failed();
+    this->mark_failed(LOG_STR("Failed to create receive queue"));
     return;
   }
 
@@ -145,9 +142,8 @@ void GPIOOneWireBus::setup() {
   this->rx_symbols_buf_ =
       RAMAllocator<rmt_symbol_word_t>(RAMAllocator<rmt_symbol_word_t>::ALLOC_INTERNAL).allocate(MAX_RX_SYMBOLS);
   if (this->rx_symbols_buf_ == nullptr) {
-    ESP_LOGE(TAG, "Failed to allocate RX symbol buffer");
     this->destroy_();
-    this->mark_failed();
+    this->mark_failed(LOG_STR("Failed to allocate RX symbol buffer"));
     return;
   }
 
@@ -161,17 +157,15 @@ void GPIOOneWireBus::setup() {
   rx_cfg.gpio_num = gpio_num;
   rx_cfg.mem_block_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL;
   if (rmt_new_rx_channel(&rx_cfg, &this->rx_channel_) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to create RX channel on GPIO %d", gpio_num);
     this->destroy_();
-    this->mark_failed();
+    this->mark_failed(LOG_STR("Failed to create RMT RX channel"));
     return;
   }
 
   rmt_rx_event_callbacks_t cbs = {.on_recv_done = rx_done_cb};
   if (rmt_rx_register_event_callbacks(this->rx_channel_, &cbs, this->receive_queue_) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to register RX callback");
     this->destroy_();
-    this->mark_failed();
+    this->mark_failed(LOG_STR("Failed to register RMT RX callback"));
     return;
   }
 
@@ -185,9 +179,8 @@ void GPIOOneWireBus::setup() {
   tx_cfg.flags.io_loop_back = true;  // TX output feeds back into RX input
   tx_cfg.flags.io_od_mode = true;    // Open-drain required for 1-wire
   if (rmt_new_tx_channel(&tx_cfg, &this->tx_channel_) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to create TX channel on GPIO %d", gpio_num);
     this->destroy_();
-    this->mark_failed();
+    this->mark_failed(LOG_STR("Failed to create RMT TX channel"));
     return;
   }
 
@@ -196,15 +189,13 @@ void GPIOOneWireBus::setup() {
   gpio_set_pull_mode(gpio_num, GPIO_PULLUP_ONLY);
 
   if (rmt_enable(this->rx_channel_) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to enable RX channel");
     this->destroy_();
-    this->mark_failed();
+    this->mark_failed(LOG_STR("Failed to enable RMT RX channel"));
     return;
   }
   if (rmt_enable(this->tx_channel_) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to enable TX channel");
     this->destroy_();
-    this->mark_failed();
+    this->mark_failed(LOG_STR("Failed to enable RMT TX channel"));
     return;
   }
 
@@ -213,9 +204,8 @@ void GPIOOneWireBus::setup() {
   rmt_symbol_word_t release = make_symbol(1, 1, 0, 1);
   if (rmt_transmit(this->tx_channel_, this->tx_copy_encoder_, &release, sizeof(release), &TX_CONFIG) != ESP_OK ||
       rmt_tx_wait_all_done(this->tx_channel_, 1000) != ESP_OK) {
-    ESP_LOGE(TAG, "Failed to release bus");
     this->destroy_();
-    this->mark_failed();
+    this->mark_failed(LOG_STR("Failed to release bus"));
     return;
   }
 
@@ -411,4 +401,4 @@ uint64_t GPIOOneWireBus::search_int() {
 
 }  // namespace esphome::gpio
 
-#endif  // defined(USE_ESP32) && SOC_RMT_SUPPORTED
+#endif  // USE_ONE_WIRE_RMT

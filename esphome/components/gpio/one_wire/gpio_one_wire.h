@@ -4,15 +4,12 @@
 #include "esphome/core/hal.h"
 #include "esphome/components/one_wire/one_wire.h"
 
-#ifdef USE_ESP32
-#include <soc/soc_caps.h>
-#if SOC_RMT_SUPPORTED
+#ifdef USE_ONE_WIRE_RMT
 #include <driver/rmt_tx.h>
 #include <driver/rmt_rx.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
-#endif  // SOC_RMT_SUPPORTED
-#endif  // USE_ESP32
+#endif  // USE_ONE_WIRE_RMT
 
 namespace esphome::gpio {
 
@@ -24,7 +21,7 @@ class GPIOOneWireBus : public one_wire::OneWireBus, public Component {
 
   void set_pin(InternalGPIOPin *pin) {
     this->t_pin_ = pin;
-#if !(defined(USE_ESP32) && SOC_RMT_SUPPORTED)
+#ifndef USE_ONE_WIRE_RMT
     this->pin_ = pin->to_isr();
 #endif
   }
@@ -35,11 +32,7 @@ class GPIOOneWireBus : public one_wire::OneWireBus, public Component {
   uint64_t read64() override;
 
  protected:
-  // Stored as a plain pointer, not initialised here, because ESPHome's code
-  // generator always calls set_pin() before setup() — the same convention
-  // used by pulse_counter (InternalGPIOPin *pin_) and every other component
-  // that receives a mandatory pin via a setter.
-  InternalGPIOPin *t_pin_;
+  InternalGPIOPin *t_pin_{};
 
   // ROM search state (shared by both RMT and bit-bang implementations).
   // Upstream gpio_one_wire initialises last_discrepancy_ and last_device_flag_
@@ -55,7 +48,7 @@ class GPIOOneWireBus : public one_wire::OneWireBus, public Component {
   bool read_bit_();
   void write_bit_(bool bit);
 
-#if defined(USE_ESP32) && SOC_RMT_SUPPORTED
+#ifdef USE_ONE_WIRE_RMT
   rmt_channel_handle_t tx_channel_{nullptr};
   rmt_channel_handle_t rx_channel_{nullptr};
   rmt_encoder_handle_t tx_bytes_encoder_{nullptr};
