@@ -1117,7 +1117,9 @@ inline size_t buf_append_str(char *buf, size_t size, size_t pos, const char *str
     return size;
   }
   size_t remaining = size - pos - 1;  // reserve space for null terminator
-  size_t len = strnlen(str, remaining);
+  size_t len = strlen(str);
+  if (len > remaining)
+    len = remaining;
   memcpy(buf + pos, str, len);
   pos += len;
   buf[pos] = '\0';
