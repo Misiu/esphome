@@ -231,5 +231,4 @@ uint64_t IRAM_ATTR GPIOOneWireBus::search_int() {
 }
 
 #endif  // !USE_ONE_WIRE_RMT
-
 }  // namespace esphome::gpio

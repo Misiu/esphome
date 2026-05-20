@@ -10,7 +10,6 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #endif  // USE_ONE_WIRE_RMT
-
 namespace esphome::gpio {
 
 class GPIOOneWireBus : public one_wire::OneWireBus, public Component {
