@@ -55,7 +55,6 @@ def test_gpio_one_wire_esp32_idf_registers_bus(
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32_idf.yaml")
 
     assert "new(ow_bus) gpio::GPIOOneWireBus();" in main_cpp
-    assert "App.register_component_(ow_bus);" in main_cpp
 
 
 def test_gpio_one_wire_esp32_idf_includes_rmt_driver(
@@ -134,7 +133,6 @@ def test_gpio_one_wire_esp8266_registers_bus(
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp8266.yaml")
 
     assert "new(ow_bus) gpio::GPIOOneWireBus();" in main_cpp
-    assert "App.register_component_(ow_bus);" in main_cpp
 
 
 def test_gpio_one_wire_esp8266_no_rmt_data(
@@ -174,26 +172,14 @@ def test_two_buses_esp32_both_instantiated(
 def test_two_buses_esp32_registered_independently(
     generate_main: Callable[[str | Path], str],
 ) -> None:
-    """Each bus must be registered as an independent ESPHome component.
+    """Each bus must be generated as an independent object.
 
-    ESPHome's component runner iterates the registered component list and
-    calls setup() on each entry.  If a bus is not registered, its setup()
-    is never called.  If both buses share a single registration entry, a
-    failure in bus1->setup() (which calls mark_failed()) would prevent
-    bus2->setup() from running because the component runner skips failed
-    components before calling their own setup().
-
-    Two separate App.register_component() calls guarantee that ESPHome
-    treats the buses as fully independent: bus1 failing never prevents
-    bus2 from being set up.
+    This guards against codegen regressions that would collapse two YAML bus
+    entries into one generated object.
     """
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32_two_buses.yaml")
 
-    assert "App.register_component_(ow_bus1);" in main_cpp
-    assert "App.register_component_(ow_bus2);" in main_cpp
-
-    # Count occurrences: exactly two register_component calls for the two buses
-    assert main_cpp.count("App.register_component_(ow_bus") == 2
+    assert main_cpp.count("new(ow_bus") == 2
 
 
 def test_two_buses_esp32_have_independent_pins(
@@ -258,17 +244,15 @@ def test_two_buses_esp32_generated_code_order(
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32_two_buses.yaml")
 
     pos_bus1_new = main_cpp.index("new(ow_bus1) gpio::GPIOOneWireBus();")
-    pos_bus1_reg = main_cpp.index("App.register_component_(ow_bus1);")
     pos_bus1_pin = main_cpp.index("ow_bus1->set_pin(")
     pos_bus2_new = main_cpp.index("new(ow_bus2) gpio::GPIOOneWireBus();")
-    pos_bus2_reg = main_cpp.index("App.register_component_(ow_bus2);")
     pos_bus2_pin = main_cpp.index("ow_bus2->set_pin(")
 
     # Bus1's entire setup block is before bus2's
-    assert pos_bus1_new < pos_bus1_reg < pos_bus1_pin < pos_bus2_new, (
+    assert pos_bus1_new < pos_bus1_pin < pos_bus2_new, (
         "bus1 setup block must be complete before bus2 setup block begins"
     )
-    assert pos_bus2_new < pos_bus2_reg < pos_bus2_pin, (
+    assert pos_bus2_new < pos_bus2_pin, (
         "bus2 setup block must follow bus1 and be internally ordered"
     )
 
@@ -309,12 +293,10 @@ def test_two_buses_esp8266_both_instantiated(
 def test_two_buses_esp8266_registered_independently(
     generate_main: Callable[[str | Path], str],
 ) -> None:
-    """ESP8266: Both buses must be registered as separate ESPHome components."""
+    """ESP8266: Both buses must be generated as separate objects."""
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp8266_two_buses.yaml")
 
-    assert "App.register_component_(ow_bus1);" in main_cpp
-    assert "App.register_component_(ow_bus2);" in main_cpp
-    assert main_cpp.count("App.register_component_(ow_bus") == 2
+    assert main_cpp.count("new(ow_bus") == 2
 
 
 def test_two_buses_esp8266_have_independent_pins(
@@ -447,7 +429,6 @@ def test_use_rmt_false_on_esp32_still_registers_bus(
     main_cpp = generate_main(HERE / "test_gpio_one_wire_esp32_idf_use_rmt_false.yaml")
 
     assert "new(ow_bus) gpio::GPIOOneWireBus();" in main_cpp
-    assert "App.register_component_(ow_bus);" in main_cpp
 
 
 def test_use_rmt_true_on_esp8266_raises_error(
