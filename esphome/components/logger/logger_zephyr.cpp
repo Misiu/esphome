@@ -20,8 +20,6 @@ __attribute__((weak)) void print_coredump() {}
 
 namespace esphome::logger {
 
-static const uint32_t CRASH_MAGIC = 0xDEADBEEF;
-
 __attribute__((section(".noinit"))) struct {
   uint32_t magic;
   uint32_t reason;
@@ -67,21 +65,21 @@ void Logger::pre_setup() {
         break;
 #ifdef USE_LOGGER_USB_CDC
       case UART_SELECTION_USB_CDC:
+#ifdef CONFIG_USB_DEVICE_STACK
         uart_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(cdc_acm_uart0));
         if (device_is_ready(uart_dev)) {
           usb_enable(nullptr);
         }
+#endif
         break;
 #endif
     }
-    if (!device_is_ready(uart_dev)) {
-      ESP_LOGE(TAG, "%s is not ready.", LOG_STR_ARG(get_uart_selection_()));
-    } else {
+    if (device_is_ready(uart_dev)) {
       this->uart_dev_ = uart_dev;
 #if defined(USE_LOGGER_WAIT_FOR_CDC) && defined(USE_LOGGER_UART_SELECTION_USB_CDC)
       uint32_t dtr = 0;
-      uint32_t count = (10 * 100);  // wait 10 sec for USB CDC to have early logs
-      while (dtr == 0 && count-- != 0) {
+      int32_t count = (10 * 100);  // wait 10 sec for USB CDC to have early logs
+      while (dtr == 0 && count-- > 0) {
         uart_line_ctrl_get(this->uart_dev_, UART_LINE_CTRL_DTR, &dtr);
         delay(10);
         arch_feed_wdt();
@@ -152,7 +150,7 @@ static const char *reason_to_str(unsigned int reason, char *buf) {
 
 void Logger::dump_crash_() {
   ESP_LOGD(TAG, "Crash buffer address %p", &crash_buf);
-  if (crash_buf.magic == CRASH_MAGIC) {
+  if (crash_buf.magic == App.get_config_hash()) {
     char reason_buf[REASON_BUF_SIZE];
     ESP_LOGE(TAG, "Last crash:");
     ESP_LOGE(TAG, "Reason=%s PC=0x%08x LR=0x%08x", reason_to_str(crash_buf.reason, reason_buf), crash_buf.pc,
@@ -160,11 +158,16 @@ void Logger::dump_crash_() {
 #if defined(CONFIG_THREAD_NAME)
     ESP_LOGE(TAG, "Thread: %s", crash_buf.thread);
 #endif
+    int32_t count = (2 * 100);  // wait 2 sec to give a chance to print crash
+    while (count-- > 0) {
+      delay(10);
+      arch_feed_wdt();
+    }
   }
 }
 
 void k_sys_fatal_error_handler(unsigned int reason, const z_arch_esf_t *esf) {
-  crash_buf.magic = CRASH_MAGIC;
+  crash_buf.magic = App.get_config_hash();
   crash_buf.reason = reason;
   if (esf) {
     crash_buf.pc = esf->basic.pc;
